@@ -4,7 +4,9 @@
 //! returns a Verdict plus an optional Effect; it never touches an operating
 //! system, so every rule in DESIGN.md §2.3 is verifiable here.
 
-use footman::{Action, BindingTable, Chord, Core, Effect, Key, KeyEvent, TapAction, Verdict};
+use footman::{
+    Action, BindingTable, Chord, Core, Effect, Key, KeyEvent, Modifiers, TapAction, Verdict,
+};
 
 fn core() -> Core {
     Core::new(Key::CapsLock, TapAction::None, BindingTable::empty())
@@ -105,4 +107,115 @@ fn releasing_and_pressing_again_fires_again() {
     let second = core.on_event(KeyEvent::Down(Key::C));
 
     assert_eq!(second.effect, Some(Effect::Run(chrome())));
+}
+
+#[test]
+fn hyper_pressed_and_released_alone_resolves_to_the_tap_action() {
+    let mut core = Core::new(Key::CapsLock, TapAction::Escape, BindingTable::empty());
+
+    core.on_event(KeyEvent::Down(Key::CapsLock));
+    let outcome = core.on_event(KeyEvent::Up(Key::CapsLock));
+
+    assert_eq!(outcome.verdict, Verdict::Suppress);
+    assert_eq!(outcome.effect, Some(Effect::Tap(TapAction::Escape)));
+}
+
+#[test]
+fn no_tap_once_a_chord_has_fired() {
+    let mut core = Core::new(
+        Key::CapsLock,
+        TapAction::Escape,
+        BindingTable::from([(Chord::key(Key::C), chrome())]),
+    );
+
+    core.on_event(KeyEvent::Down(Key::CapsLock));
+    core.on_event(KeyEvent::Down(Key::C));
+    core.on_event(KeyEvent::Up(Key::C));
+    let outcome = core.on_event(KeyEvent::Up(Key::CapsLock));
+
+    assert!(outcome.effect.is_none());
+}
+
+#[test]
+fn a_tap_action_of_none_produces_no_effect() {
+    let mut core = core();
+
+    core.on_event(KeyEvent::Down(Key::CapsLock));
+    let outcome = core.on_event(KeyEvent::Up(Key::CapsLock));
+
+    assert!(outcome.effect.is_none());
+}
+
+fn terminal() -> Action {
+    Action::App {
+        id: "aumid:Microsoft.WindowsTerminal_8wekyb3d8bbwe!App".to_string(),
+    }
+}
+
+#[test]
+fn a_modifier_makes_a_different_chord() {
+    let mut core = Core::new(
+        Key::CapsLock,
+        TapAction::None,
+        BindingTable::from([
+            (Chord::key(Key::C), chrome()),
+            (Chord::key(Key::C).with(Modifiers::SHIFT), terminal()),
+        ]),
+    );
+
+    core.on_event(KeyEvent::Down(Key::CapsLock));
+    core.on_event(KeyEvent::Down(Key::Shift));
+    let outcome = core.on_event(KeyEvent::Down(Key::C));
+
+    assert_eq!(outcome.effect, Some(Effect::Run(terminal())));
+}
+
+#[test]
+fn a_held_modifier_does_not_fire_the_unmodified_chord() {
+    let mut core = Core::new(
+        Key::CapsLock,
+        TapAction::None,
+        BindingTable::from([(Chord::key(Key::C), chrome())]),
+    );
+
+    core.on_event(KeyEvent::Down(Key::CapsLock));
+    core.on_event(KeyEvent::Down(Key::Shift));
+    let outcome = core.on_event(KeyEvent::Down(Key::C));
+
+    assert_eq!(outcome.verdict, Verdict::Suppress);
+    assert!(outcome.effect.is_none());
+}
+
+#[test]
+fn keys_pass_normally_once_hyper_is_released() {
+    let mut core = Core::new(
+        Key::CapsLock,
+        TapAction::None,
+        BindingTable::from([(Chord::key(Key::C), chrome())]),
+    );
+
+    core.on_event(KeyEvent::Down(Key::CapsLock));
+    core.on_event(KeyEvent::Down(Key::C));
+    core.on_event(KeyEvent::Up(Key::C));
+    core.on_event(KeyEvent::Up(Key::CapsLock));
+
+    let outcome = core.on_event(KeyEvent::Down(Key::C));
+
+    assert_eq!(outcome.verdict, Verdict::Pass);
+    assert!(outcome.effect.is_none());
+}
+
+#[test]
+fn modifier_keys_themselves_always_pass() {
+    let mut core = core();
+
+    core.on_event(KeyEvent::Down(Key::CapsLock));
+
+    for modifier in [Key::Shift, Key::Ctrl, Key::Alt] {
+        assert_eq!(
+            core.on_event(KeyEvent::Down(modifier)).verdict,
+            Verdict::Pass
+        );
+        assert_eq!(core.on_event(KeyEvent::Up(modifier)).verdict, Verdict::Pass);
+    }
 }

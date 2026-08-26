@@ -18,3 +18,9 @@ path = "src/lib.rs"
 # Core is pure (no OS, no clock, no I/O), so it needs nothing to be built or
 # tested.
 [dependencies]
+
+[dev-dependencies]
+# The Core's safety invariants ("nothing is ever suppressed unless Hyper is
+# held") are universal claims, so they are stated as properties rather than as
+# a handful of examples.
+proptest = "1"

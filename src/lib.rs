@@ -11,6 +11,25 @@ pub enum Key {
     C,
     J,
     CapsLock,
+    Shift,
+    Ctrl,
+    Alt,
+}
+
+impl Key {
+    /// The Modifiers bit this key contributes to a Chord, if it is a modifier.
+    ///
+    /// Left and right variants are not distinguished: a Chord is written
+    /// `Shift+C`, never `LeftShift+C`, so the Shell normalises both sides to
+    /// the same key.
+    const fn as_modifier(self) -> Option<Modifiers> {
+        match self {
+            Key::Shift => Some(Modifiers::SHIFT),
+            Key::Ctrl => Some(Modifiers::CTRL),
+            Key::Alt => Some(Modifiers::ALT),
+            _ => None,
+        }
+    }
 }
 
 /// One raw key transition, as reported by the Shell.
@@ -28,6 +47,7 @@ pub enum KeyEvent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TapAction {
     None,
+    Escape,
 }
 
 /// The Core's ruling on one key event.
@@ -48,6 +68,17 @@ pub struct Modifiers(u8);
 
 impl Modifiers {
     pub const NONE: Self = Self(0);
+    pub const SHIFT: Self = Self(1 << 0);
+    pub const CTRL: Self = Self(1 << 1);
+    pub const ALT: Self = Self(1 << 2);
+
+    fn insert(&mut self, other: Self) {
+        self.0 |= other.0;
+    }
+
+    fn remove(&mut self, other: Self) {
+        self.0 &= !other.0;
+    }
 }
 
 /// Hyper, plus zero or more ordinary modifiers, plus exactly one key.
@@ -66,6 +97,10 @@ impl Chord {
             key,
         }
     }
+
+    pub const fn with(self, mods: Modifiers) -> Self {
+        Self { mods, ..self }
+    }
 }
 
 /// What a Binding does when its Chord fires.
@@ -79,6 +114,7 @@ pub enum Action {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
     Run(Action),
+    Tap(TapAction),
 }
 
 /// The Core's full reply to one key event.
@@ -107,6 +143,13 @@ impl Outcome {
         Self {
             verdict: Verdict::Suppress,
             effect: Some(Effect::Run(action)),
+        }
+    }
+
+    fn tap(tap: TapAction) -> Self {
+        Self {
+            verdict: Verdict::Suppress,
+            effect: Some(Effect::Tap(tap)),
         }
     }
 }
@@ -139,53 +182,87 @@ impl<const N: usize> From<[(Chord, Action); N]> for BindingTable {
 #[derive(Debug)]
 pub struct Core {
     hyper: Key,
-    _tap: TapAction,
+    tap: TapAction,
     bindings: BindingTable,
-    hyper_held: bool,
-    /// Keys currently down. A `Down` for a key already in here is auto-repeat,
-    /// not a new physical press, and must not fire an Action a second time.
+    /// Keys currently down. Two facts are read off this: whether Hyper is held,
+    /// and whether a `Down` is auto-repeat rather than a new physical press.
     held: HashSet<Key>,
+    /// Ordinary modifiers currently held.
+    mods: Modifiers,
+    /// Whether a Chord has fired since Hyper went down. This — not elapsed
+    /// time — is what separates a Tap from a Chord (DESIGN.md §2.3).
+    chord_fired: bool,
 }
 
 impl Core {
     pub fn new(hyper: Key, tap: TapAction, bindings: BindingTable) -> Self {
         Self {
             hyper,
-            _tap: tap,
+            tap,
             bindings,
-            hyper_held: false,
             held: HashSet::new(),
+            mods: Modifiers::NONE,
+            chord_fired: false,
         }
     }
 
     pub fn on_event(&mut self, event: KeyEvent) -> Outcome {
         match event {
-            KeyEvent::Down(key) => {
-                let repeat = !self.held.insert(key);
+            KeyEvent::Down(key) => self.on_down(key),
+            KeyEvent::Up(key) => self.on_up(key),
+        }
+    }
 
-                if key == self.hyper {
-                    self.hyper_held = true;
-                    return Outcome::suppress();
-                }
-                if !self.hyper_held {
-                    return Outcome::pass();
-                }
-                match self.bindings.get(&Chord::key(key)) {
-                    // An Action fires once per physical press; auto-repeat is
-                    // still swallowed, but does nothing (DESIGN.md §2.3).
-                    Some(action) if !repeat => Outcome::fire(action.clone()),
-                    _ => Outcome::suppress(),
-                }
-            }
-            KeyEvent::Up(key) => {
-                self.held.remove(&key);
+    fn hyper_held(&self) -> bool {
+        self.held.contains(&self.hyper)
+    }
 
-                if key == self.hyper {
-                    self.hyper_held = false;
-                    return Outcome::suppress();
-                }
-                Outcome::pass()
+    fn on_down(&mut self, key: Key) -> Outcome {
+        let repeat = !self.held.insert(key);
+
+        if key == self.hyper {
+            self.chord_fired = false;
+            return Outcome::suppress();
+        }
+        if let Some(modifier) = key.as_modifier() {
+            self.mods.insert(modifier);
+            // A modifier alone does nothing visible, so passing it keeps the
+            // OS's own modifier state in step with ours.
+            return Outcome::pass();
+        }
+        if !self.hyper_held() {
+            return Outcome::pass();
+        }
+
+        match self.bindings.get(&Chord::key(key).with(self.mods)) {
+            // An Action fires once per physical press; auto-repeat is still
+            // swallowed, but does nothing (DESIGN.md §2.3).
+            Some(action) if !repeat => {
+                let action = action.clone();
+                self.chord_fired = true;
+                Outcome::fire(action)
             }
+            _ => Outcome::suppress(),
+        }
+    }
+
+    fn on_up(&mut self, key: Key) -> Outcome {
+        self.held.remove(&key);
+
+        if let Some(modifier) = key.as_modifier() {
+            self.mods.remove(modifier);
+            return Outcome::pass();
+        }
+        if key != self.hyper {
+            return Outcome::pass();
+        }
+
+        // Tap is not a duration: it is simply "Hyper came back up and no Chord
+        // fired in between" (DESIGN.md §2.3).
+        match self.tap {
+            _ if self.chord_fired => Outcome::suppress(),
+            TapAction::None => Outcome::suppress(),
+            tap => Outcome::tap(tap),
         }
     }
 }
