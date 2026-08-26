@@ -279,13 +279,13 @@ no localisation.
 
 ## 12. Build order
 
-Each slice states how it is verified. Slice 0 is complete.
+Each slice states how it is verified. Slices 0-2 are complete.
 
 | # | Slice | Verification |
 | --- | --- | --- |
 | 0 | **Identity spike** — done | Measured: window AUMID 2/7, process AUMID covers the rest, path covers the remainder. Result recorded in ADR-0003 |
-| 1 | **Core** — Hyper state machine, Binding table, Chord resolution | Unit and property tests: auto-repeat fires exactly once, unbound keys always Suppress, Tap only when no Chord fired |
-| 2 | **Config** — schema, load, validate, report | Round-trip tests; malformed fixtures match the §7 table |
+| 1 | **Core** — done — Hyper state machine, Binding table, Chord resolution | Unit and property tests: auto-repeat fires exactly once, unbound keys always Suppress, Tap only when no Chord fired |
+| 2 | **Config** — done — schema, load, validate, report | Round-trip tests; malformed fixtures match the §7 table |
 | 3 | **Hook + Dispatcher** — hook, channel, worker, watchdog | Callback duration measured under 1 ms; hook forcibly removed and observed to reinstall |
 | 4 | **App Action** — find, raise, cycle, cross-desktop rule | Manual matrix: running/not × one window/several × this desktop/another |
 | 5 | **Open, Run, Desktop Actions** | Manual; desktop index verified against the registry |

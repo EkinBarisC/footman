@@ -14,13 +14,21 @@ keywords = ["hotkey", "launcher", "hyperkey", "keyboard", "windows"]
 name = "footman"
 path = "src/lib.rs"
 
-# Dependencies are introduced with the slice that needs them: none yet — the
-# Core is pure (no OS, no clock, no I/O), so it needs nothing to be built or
-# tested.
+# Dependencies are introduced with the slice that needs them.
 [dependencies]
+# Config (slice 2). `toml` is chosen over a hand-rolled parser mainly for its
+# error spans: DESIGN.md §7 requires a malformed file to be reported with a
+# line number rather than a shrug.
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"
+# Finds the per-user config directory each platform actually uses, so the path
+# is not hard-coded per OS.
+directories = "6"
 
 [dev-dependencies]
 # The Core's safety invariants ("nothing is ever suppressed unless Hyper is
 # held") are universal claims, so they are stated as properties rather than as
 # a handful of examples.
 proptest = "1"
+# Config loading touches the filesystem, so its tests need a scratch directory.
+tempfile = "3"
