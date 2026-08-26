@@ -13,6 +13,9 @@ use serde::{Deserialize, Serialize};
 
 mod config;
 
+#[cfg(windows)]
+pub mod windows;
+
 pub use config::{Config, ConfigError, Loaded, Warning};
 /// Declares the key set once, and derives the enum, its parser and its display
 /// from that single table so the three can never drift apart. The name in each
@@ -41,6 +44,11 @@ macro_rules! keys {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 f.write_str(match self { $(Key::$variant => $name),* })
             }
+        }
+
+        impl Key {
+            /// Every bindable key, in key-table order.
+            pub const ALL: &'static [Key] = &[$(Key::$variant),*];
         }
     };
 }
@@ -332,7 +340,7 @@ impl BindingTable {
     ///
     /// Returns whether the Chord was free. The first Binding wins so that a
     /// duplicate can be reported rather than silently overwriting (DESIGN.md §7).
-    fn insert(&mut self, chord: Chord, action: Action) -> bool {
+    pub fn add(&mut self, chord: Chord, action: Action) -> bool {
         match self.bindings.entry(chord) {
             Entry::Occupied(_) => false,
             Entry::Vacant(slot) => {
@@ -360,6 +368,10 @@ pub struct Core {
     /// Keys currently down. Two facts are read off this: whether Hyper is held,
     /// and whether a `Down` is auto-repeat rather than a new physical press.
     held: HashSet<Key>,
+    /// Keys whose press was suppressed, so their release can be suppressed too.
+    /// Keyed on the press because that is when the decision is made: by the
+    /// time the release arrives, Hyper may already be up (DESIGN.md §2.3).
+    swallowed: HashSet<Key>,
     /// Ordinary modifiers currently held.
     mods: Modifiers,
     /// Whether a Chord has fired since Hyper went down. This — not elapsed
@@ -374,6 +386,7 @@ impl Core {
             tap,
             bindings,
             held: HashSet::new(),
+            swallowed: HashSet::new(),
             mods: Modifiers::NONE,
             chord_fired: false,
         }
@@ -404,8 +417,15 @@ impl Core {
             return Outcome::pass();
         }
         if !self.hyper_held() {
+            // This press reaches the application, so its release must too —
+            // even if an earlier press of the same key, under Hyper, did not.
+            self.swallowed.remove(&key);
             return Outcome::pass();
         }
+
+        // Whatever the lookup says, this press is Footman's; its release is
+        // Footman's too.
+        self.swallowed.insert(key);
 
         match self.bindings.get(&Chord::key(key).with(self.mods)) {
             // An Action fires once per physical press; auto-repeat is still
@@ -421,13 +441,18 @@ impl Core {
 
     fn on_up(&mut self, key: Key) -> Outcome {
         self.held.remove(&key);
+        let swallowed = self.swallowed.remove(&key);
 
         if let Some(modifier) = key.as_modifier() {
             self.mods.remove(modifier);
             return Outcome::pass();
         }
         if key != self.hyper {
-            return Outcome::pass();
+            return if swallowed {
+                Outcome::suppress()
+            } else {
+                Outcome::pass()
+            };
         }
 
         // Tap is not a duration: it is simply "Hyper came back up and no Chord

@@ -26,6 +26,21 @@ fn event() -> impl Strategy<Value = KeyEvent> {
     })
 }
 
+/// Hyper included, so the properties see it interleave with everything else.
+fn hyper_or_ordinary() -> impl Strategy<Value = KeyEvent> {
+    (
+        prop::sample::select([Key::C, Key::J, Key::Shift, Key::Ctrl, HYPER].as_slice()),
+        any::<bool>(),
+    )
+        .prop_map(|(key, down)| {
+            if down {
+                KeyEvent::Down(key)
+            } else {
+                KeyEvent::Up(key)
+            }
+        })
+}
+
 fn chrome() -> Action {
     Action::App {
         id: "aumid:Chrome".to_string(),
@@ -80,5 +95,46 @@ proptest! {
             .count();
 
         prop_assert_eq!(fired, 1);
+    }
+
+    /// No key is ever left stuck, in either direction. An application that saw
+    /// a press must see the matching release, or the key is held down forever;
+    /// and a press Footman swallowed must not be followed by a release the
+    /// application never had a press for. Whatever order Hyper and the key are
+    /// pressed and let go in.
+    #[test]
+    fn presses_and_releases_are_decided_alike(events in prop::collection::vec(hyper_or_ordinary(), 0..200)) {
+        let mut core = Core::new(
+            HYPER,
+            TapAction::Escape,
+            BindingTable::from([(Chord::key(Key::C), chrome())]),
+        );
+        // What the application below Footman believes about each key.
+        let mut believed_pressed = std::collections::HashSet::new();
+        let mut swallowed_press = std::collections::HashSet::new();
+
+        for event in events {
+            let passed = core.on_event(event).verdict == Verdict::Pass;
+            match event {
+                KeyEvent::Down(key) => {
+                    if passed {
+                        believed_pressed.insert(key);
+                        swallowed_press.remove(&key);
+                    } else {
+                        swallowed_press.insert(key);
+                        believed_pressed.remove(&key);
+                    }
+                }
+                KeyEvent::Up(key) => {
+                    if believed_pressed.remove(&key) {
+                        prop_assert!(passed, "suppressed the release of {:?}, leaving it stuck down", key);
+                    } else if swallowed_press.remove(&key) {
+                        prop_assert!(!passed, "passed the release of {:?}, whose press was swallowed", key);
+                    }
+                    // A release with no press at all — the key was already down
+                    // when Footman started — is nobody's business either way.
+                }
+            }
+        }
     }
 }

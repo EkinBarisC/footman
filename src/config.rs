@@ -152,7 +152,7 @@ impl Config {
                 .and_then(|action| action.check().map(|()| action))
             {
                 Ok(action) => {
-                    if !bindings.insert(chord, action) {
+                    if !bindings.add(chord, action) {
                         warnings.push(Warning::DuplicateChord { chord: entry.chord });
                     }
                 }
