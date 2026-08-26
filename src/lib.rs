@@ -4,16 +4,64 @@
 //! key events, and returns a [`Verdict`] plus an optional [`Effect`]. It makes
 //! no OS calls, reads no clock and performs no I/O — see ADR-0002.
 
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
-/// A key Footman can reason about, independent of any platform's key codes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Key {
-    C,
-    J,
-    CapsLock,
-    Shift,
-    Ctrl,
-    Alt,
+use std::fmt;
+use std::str::FromStr;
+
+use serde::{Deserialize, Serialize};
+
+mod config;
+
+pub use config::{Config, ConfigError, Loaded, Warning};
+/// Declares the key set once, and derives the enum, its parser and its display
+/// from that single table so the three can never drift apart. The name in each
+/// row is exactly what a Chord is written with in the config file.
+macro_rules! keys {
+    ($($variant:ident => $name:literal),* $(,)?) => {
+        /// A key Footman can reason about, independent of any platform's key codes.
+        ///
+        /// Punctuation is deliberately absent: where `;` or `[` physically sits
+        /// depends on the keyboard layout — the same trap that shaped ADR-0001 —
+        /// so naming them would mean a config binding different keys on
+        /// different machines.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+        pub enum Key { $($variant),* }
+
+        impl FromStr for Key {
+            type Err = ();
+
+            fn from_str(name: &str) -> Result<Self, Self::Err> {
+                $(if name.eq_ignore_ascii_case($name) { return Ok(Key::$variant); })*
+                Err(())
+            }
+        }
+
+        impl fmt::Display for Key {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str(match self { $(Key::$variant => $name),* })
+            }
+        }
+    };
+}
+
+keys! {
+    A => "A", B => "B", C => "C", D => "D", E => "E", F => "F",
+    G => "G", H => "H", I => "I", J => "J", K => "K", L => "L",
+    M => "M", N => "N", O => "O", P => "P", Q => "Q", R => "R",
+    S => "S", T => "T", U => "U", V => "V", W => "W", X => "X",
+    Y => "Y", Z => "Z",
+    Digit0 => "0", Digit1 => "1", Digit2 => "2", Digit3 => "3", Digit4 => "4", Digit5 => "5",
+    Digit6 => "6", Digit7 => "7", Digit8 => "8", Digit9 => "9",
+    F1 => "F1", F2 => "F2", F3 => "F3", F4 => "F4", F5 => "F5", F6 => "F6",
+    F7 => "F7", F8 => "F8", F9 => "F9", F10 => "F10", F11 => "F11", F12 => "F12",
+    F13 => "F13", F14 => "F14", F15 => "F15", F16 => "F16", F17 => "F17", F18 => "F18",
+    F19 => "F19", F20 => "F20", F21 => "F21", F22 => "F22", F23 => "F23", F24 => "F24",
+    Left => "Left", Right => "Right", Up => "Up", Down => "Down",
+    Space => "Space", Enter => "Enter", Tab => "Tab", Backspace => "Backspace",
+    Escape => "Escape", Delete => "Delete", Insert => "Insert", Home => "Home",
+    End => "End", PageUp => "PageUp", PageDown => "PageDown", CapsLock => "CapsLock",
+    Shift => "Shift", Ctrl => "Ctrl", Alt => "Alt",
 }
 
 impl Key {
@@ -28,6 +76,27 @@ impl Key {
             Key::Ctrl => Some(Modifiers::CTRL),
             Key::Alt => Some(Modifiers::ALT),
             _ => None,
+        }
+    }
+}
+
+impl fmt::Display for TapAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            TapAction::None => "none",
+            TapAction::Escape => "escape",
+        })
+    }
+}
+
+impl FromStr for TapAction {
+    type Err = ();
+
+    fn from_str(name: &str) -> Result<Self, Self::Err> {
+        match name.to_ascii_lowercase().as_str() {
+            "none" => Ok(TapAction::None),
+            "escape" => Ok(TapAction::Escape),
+            _ => Err(()),
         }
     }
 }
@@ -63,7 +132,7 @@ pub enum Verdict {
 ///
 /// Win is deliberately absent: unsuppressed it opens the Start menu, and
 /// suppressing it would mean synthesising input (ADR-0001).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub struct Modifiers(u8);
 
 impl Modifiers {
@@ -72,6 +141,10 @@ impl Modifiers {
     pub const CTRL: Self = Self(1 << 1);
     pub const ALT: Self = Self(1 << 2);
 
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
     fn insert(&mut self, other: Self) {
         self.0 |= other.0;
     }
@@ -79,12 +152,16 @@ impl Modifiers {
     fn remove(&mut self, other: Self) {
         self.0 &= !other.0;
     }
+
+    fn contains(self, other: Self) -> bool {
+        self.0 & other.0 == other.0
+    }
 }
 
 /// Hyper, plus zero or more ordinary modifiers, plus exactly one key.
 ///
 /// Hyper is implicit — every Chord begins with it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Chord {
     pub mods: Modifiers,
     pub key: Key,
@@ -103,11 +180,85 @@ impl Chord {
     }
 }
 
+impl fmt::Display for Chord {
+    /// Canonical spelling: modifiers in a fixed order, then the key. Chords are
+    /// read case- and order-insensitively, but only ever written one way.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (modifier, name) in [
+            (Modifiers::CTRL, "Ctrl"),
+            (Modifiers::ALT, "Alt"),
+            (Modifiers::SHIFT, "Shift"),
+        ] {
+            if self.mods.contains(modifier) {
+                write!(f, "{name}+")?;
+            }
+        }
+        write!(f, "{}", self.key)
+    }
+}
+
+impl FromStr for Chord {
+    type Err = ();
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let mut parts = text.split('+').map(str::trim).rev();
+        let key: Key = parts.next().ok_or(())?.parse()?;
+
+        let mut mods = Modifiers::NONE;
+        for part in parts {
+            mods.insert(part.parse()?);
+        }
+
+        Ok(Chord::key(key).with(mods))
+    }
+}
+
+impl FromStr for Modifiers {
+    type Err = ();
+
+    fn from_str(name: &str) -> Result<Self, Self::Err> {
+        match name.to_ascii_lowercase().as_str() {
+            "shift" => Ok(Modifiers::SHIFT),
+            "ctrl" => Ok(Modifiers::CTRL),
+            "alt" => Ok(Modifiers::ALT),
+            _ => Err(()),
+        }
+    }
+}
+
 /// What a Binding does when its Chord fires.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum Action {
     /// Focus an application, launching it first if it is not running.
+    ///
+    /// The id is opaque here — the Shell alone knows what `aumid:` or `path:`
+    /// mean (ADR-0003).
     App { id: String },
+    /// Hand a URL, file or folder to the operating system's default handler.
+    Open { target: String },
+    /// Execute a command line.
+    Run {
+        command: String,
+        /// A console window is noise for a launcher, so it is hidden unless asked.
+        #[serde(default)]
+        show_window: bool,
+    },
+    /// Switch to a virtual desktop, numbered from 1 as the user sees them.
+    Desktop { index: usize },
+}
+
+impl Action {
+    /// Whether this Action could ever do what it says.
+    ///
+    /// Only shape is checked, never the world: whether Chrome is installed is
+    /// not knowable here, and the Core must stay free of the OS (ADR-0002).
+    fn check(&self) -> Result<(), String> {
+        match self {
+            Action::Desktop { index: 0 } => Err("desktops are numbered from 1".to_string()),
+            _ => Ok(()),
+        }
+    }
 }
 
 /// Something for the Dispatcher to carry out, alongside the Verdict.
@@ -155,7 +306,7 @@ impl Outcome {
 }
 
 /// The set of Bindings in force.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct BindingTable {
     bindings: HashMap<Chord, Action>,
 }
@@ -165,8 +316,30 @@ impl BindingTable {
         Self::default()
     }
 
-    fn get(&self, chord: &Chord) -> Option<&Action> {
+    pub fn get(&self, chord: &Chord) -> Option<&Action> {
         self.bindings.get(chord)
+    }
+
+    /// Every Binding, in a fixed order — key-table order, not map order — so
+    /// that writing the config file produces the same bytes every time.
+    pub fn sorted(&self) -> Vec<(Chord, &Action)> {
+        let mut all: Vec<_> = self.bindings.iter().map(|(&c, a)| (c, a)).collect();
+        all.sort_by_key(|(chord, _)| *chord);
+        all
+    }
+
+    /// Adds a Binding, keeping any Binding already on that Chord.
+    ///
+    /// Returns whether the Chord was free. The first Binding wins so that a
+    /// duplicate can be reported rather than silently overwriting (DESIGN.md §7).
+    fn insert(&mut self, chord: Chord, action: Action) -> bool {
+        match self.bindings.entry(chord) {
+            Entry::Occupied(_) => false,
+            Entry::Vacant(slot) => {
+                slot.insert(action);
+                true
+            }
+        }
     }
 }
 
