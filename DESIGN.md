@@ -126,8 +126,25 @@ measured and found broken; the cascade was measured at full coverage. The
 evidence and reasoning are in
 [ADR-0003](./docs/adr/0003-app-identity-resolution-cascade.md).
 
+The cascade decides which identity is *stored*. For *matching*, a window answers
+to every identity its cascade produces, not only the first: a Binding written as
+`path:...\chrome.exe` still matches a Chrome window whose window-AUMID resolves
+first. This costs nothing and removes a whole class of "it stopped matching and
+I cannot see why".
+
+One further rule, measured rather than reasoned: Windows keeps many top-level
+windows alive that no user would call a window — suspended UWP applications, the
+touch-keyboard host, the inner half of a UWP split window. They pass every
+classic Alt-Tab test and are separated from real windows only by DWM cloaking,
+and cloaking alone is not enough, because every window on another virtual
+desktop is cloaked too. A window is a ghost when it is cloaked *and* on the
+desktop the user is looking at. The measurements are in
+`tests/windows_ghosts.rs`.
+
 Users never type an identity. The settings window lists installed applications
-and resolves the identity behind the scenes.
+and resolves the identity behind the scenes. Until it exists, `footman windows`
+prints the same enumeration and the same cascade the App Action uses, and
+`footman focus <identity>` runs one App Action without the keyboard.
 
 ## 6. Configuration
 
@@ -287,7 +304,7 @@ Each slice states how it is verified. Slices 0-2 are complete.
 | 1 | **Core** — done — Hyper state machine, Binding table, Chord resolution | Unit and property tests: auto-repeat fires exactly once, unbound keys always Suppress, Tap only when no Chord fired |
 | 2 | **Config** — done — schema, load, validate, report | Round-trip tests; malformed fixtures match the §7 table |
 | 3 | **Hook + Dispatcher** — done — hook, channel, worker, watchdog | Callback budget measured; liveness inferred rather than queried (ADR-0006); end-to-end verified by hand, since `SendInput` does not reach hooks on the development machine |
-| 4 | **App Action** — find, raise, cycle, cross-desktop rule | Manual matrix: running/not × one window/several × this desktop/another |
+| 4 | **App Action** — done — find, raise, cycle, cross-desktop rule | Manual matrix: running/not × one window/several × this desktop/another; cascade and ghost rule measured on the reference machine |
 | 5 | **Open, Run, Desktop Actions** | Manual; desktop index verified against the registry |
 | 6 | **Tray + Pause** | Manual |
 | 7 | **Settings window** | Manual; Chord capture and application picker |

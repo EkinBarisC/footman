@@ -11,11 +11,13 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
+mod app;
 mod config;
 
 #[cfg(windows)]
 pub mod windows;
 
+pub use app::{AppTarget, Window, choose_window};
 pub use config::{Config, ConfigError, Loaded, Warning};
 /// Declares the key set once, and derives the enum, its parser and its display
 /// from that single table so the three can never drift apart. The name in each
