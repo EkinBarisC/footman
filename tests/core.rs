@@ -219,3 +219,50 @@ fn modifier_keys_themselves_always_pass() {
         assert_eq!(core.on_event(KeyEvent::Up(modifier)).verdict, Verdict::Pass);
     }
 }
+
+/// A key whose press was swallowed must have its release swallowed too.
+///
+/// Windows delivers key-down and key-up as separate events, so a Core that
+/// suppresses only the press leaks a lone release into the focused window.
+/// Most applications ignore a release they never saw pressed, but not all —
+/// and a key event Footman consumed should not be visible at all.
+#[test]
+fn the_release_of_a_suppressed_key_is_suppressed_too() {
+    let mut core = core();
+    core.on_event(KeyEvent::Down(Key::CapsLock));
+    assert_eq!(
+        core.on_event(KeyEvent::Down(Key::J)).verdict,
+        Verdict::Suppress
+    );
+
+    let outcome = core.on_event(KeyEvent::Up(Key::J));
+
+    assert_eq!(outcome.verdict, Verdict::Suppress);
+    assert!(outcome.effect.is_none());
+}
+
+/// The release can arrive after Hyper is already up — the user lets go of both
+/// in whichever order their hand happens to. The press is what decides.
+#[test]
+fn a_release_after_hyper_is_gone_is_still_suppressed() {
+    let mut core = core();
+    core.on_event(KeyEvent::Down(Key::CapsLock));
+    core.on_event(KeyEvent::Down(Key::J));
+    core.on_event(KeyEvent::Up(Key::CapsLock));
+
+    assert_eq!(
+        core.on_event(KeyEvent::Up(Key::J)).verdict,
+        Verdict::Suppress
+    );
+}
+
+/// The converse, and the more important half: a key Footman passed through must
+/// have its release passed through as well, or applications see a press with no
+/// release and treat the key as stuck.
+#[test]
+fn the_release_of_a_passed_key_passes() {
+    let mut core = core();
+    assert_eq!(core.on_event(KeyEvent::Down(Key::J)).verdict, Verdict::Pass);
+
+    assert_eq!(core.on_event(KeyEvent::Up(Key::J)).verdict, Verdict::Pass);
+}

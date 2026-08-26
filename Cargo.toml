@@ -14,6 +14,10 @@ keywords = ["hotkey", "launcher", "hyperkey", "keyboard", "windows"]
 name = "footman"
 path = "src/lib.rs"
 
+[[bin]]
+name = "footman"
+path = "src/main.rs"
+
 # Dependencies are introduced with the slice that needs them.
 [dependencies]
 # Config (slice 2). `toml` is chosen over a hand-rolled parser mainly for its
@@ -32,3 +36,28 @@ directories = "6"
 proptest = "1"
 # Config loading touches the filesystem, so its tests need a scratch directory.
 tempfile = "3"
+
+[features]
+# Opt-in: installs a real keyboard hook and synthesises real input, so it is
+# never on by default. Run with `cargo test --features integration-test`.
+integration-test = []
+
+[target."cfg(windows)".dev-dependencies]
+# The end-to-end test inspects Windows' own input state to check its premises.
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[target."cfg(windows)".dependencies]
+# The Windows Shell (slice 3): the low-level keyboard hook, its message loop,
+# and the tick counters the watchdog compares.
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_System_LibraryLoader",
+    "Win32_System_SystemInformation",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }

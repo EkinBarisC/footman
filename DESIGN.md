@@ -286,7 +286,7 @@ Each slice states how it is verified. Slices 0-2 are complete.
 | 0 | **Identity spike** — done | Measured: window AUMID 2/7, process AUMID covers the rest, path covers the remainder. Result recorded in ADR-0003 |
 | 1 | **Core** — done — Hyper state machine, Binding table, Chord resolution | Unit and property tests: auto-repeat fires exactly once, unbound keys always Suppress, Tap only when no Chord fired |
 | 2 | **Config** — done — schema, load, validate, report | Round-trip tests; malformed fixtures match the §7 table |
-| 3 | **Hook + Dispatcher** — hook, channel, worker, watchdog | Callback duration measured under 1 ms; hook forcibly removed and observed to reinstall |
+| 3 | **Hook + Dispatcher** — done — hook, channel, worker, watchdog | Callback budget measured; liveness inferred rather than queried (ADR-0006); end-to-end verified by hand, since `SendInput` does not reach hooks on the development machine |
 | 4 | **App Action** — find, raise, cycle, cross-desktop rule | Manual matrix: running/not × one window/several × this desktop/another |
 | 5 | **Open, Run, Desktop Actions** | Manual; desktop index verified against the registry |
 | 6 | **Tray + Pause** | Manual |
