@@ -1,0 +1,26 @@
+[package]
+name = "footman"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+description = "Cross-platform hyper-key launcher — Hyper plus a key focuses an app, opens a target, runs a command, or switches desktop"
+license = "MIT"
+repository = "https://github.com/EkinBarisC/footman"
+keywords = ["hotkey", "launcher", "hyperkey", "keyboard", "windows"]
+
+# The Core is a library so the integration tests exercise the real public API
+# (see ADR-0002 and DESIGN.md §9). The binary arrives with the Shell in slice 3.
+[lib]
+name = "footman"
+path = "src/lib.rs"
+
+# Dependencies are introduced with the slice that needs them: none yet — the
+# Core is pure (no OS, no clock, no I/O), so it needs nothing to be built or
+# tested.
+[dependencies]
+
+[dev-dependencies]
+# The Core's safety invariants ("nothing is ever suppressed unless Hyper is
+# held") are universal claims, so they are stated as properties rather than as
+# a handful of examples.
+proptest = "1"
