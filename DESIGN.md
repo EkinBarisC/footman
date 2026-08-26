@@ -114,6 +114,15 @@ repeating the Chord does nothing.
 The cycle is deliberately confined to the current desktop. A cycle that spanned
 desktops would fling the user between contexts on repeated presses.
 
+**Which desktop a launch lands on is Windows' decision, not Footman's.** A new
+window opens on the desktop that is active when it is created, which is the
+desired behaviour; single-instance applications that restore a remembered window
+instead are behaving as they do for any other launcher. Footman cannot correct
+this after the fact: `IVirtualDesktopManager::MoveWindowToDesktop` was measured
+returning `E_ACCESSDENIED` for every window this process does not own, so moving
+someone else's window between desktops is not available at all. `GetWindowDesktopId`
+and `IsWindowOnCurrentVirtualDesktop`, which only read, do work across processes.
+
 ## 5. App Identity
 
 An App Identity is an opaque, scheme-prefixed string —

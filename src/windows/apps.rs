@@ -33,19 +33,22 @@ use super::identity::{Launch, launch_of, matches};
 use crate::{AppTarget, Window, choose_window};
 
 /// Carries out an App Action: raise, cycle or launch (DESIGN.md §4).
-pub fn focus(identity: &str) -> Result<(), String> {
+///
+/// Returns what it decided, which is worth knowing: "it opened on the wrong
+/// desktop" and "it raised a window that was still open on another desktop"
+/// look identical from the outside and have nothing to do with each other.
+pub fn focus(identity: &str) -> Result<AppTarget, String> {
     let windows = windows_of(identity);
     let foreground = unsafe { GetForegroundWindow() };
     let foreground = (!foreground.is_invalid()).then_some(foreground.0 as u64);
 
-    match choose_window(&windows, foreground) {
-        AppTarget::Nothing => Ok(()),
-        AppTarget::Raise(id) => {
-            raise(HWND(id as *mut _));
-            Ok(())
-        }
-        AppTarget::Launch => launch(identity),
+    let target = choose_window(&windows, foreground);
+    match target {
+        AppTarget::Nothing => {}
+        AppTarget::Raise(id) => raise(HWND(id as *mut _)),
+        AppTarget::Launch => launch(identity)?,
     }
+    Ok(target)
 }
 
 /// Every task window on the machine with the identities it answers to, topmost

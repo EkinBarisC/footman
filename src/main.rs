@@ -48,7 +48,7 @@ fn survey() {
 fn focus(identity: &str) {
     footman::windows::init_thread();
     match footman::windows::focus(identity) {
-        Ok(()) => println!("footman: {identity}"),
+        Ok(decision) => println!("footman: {identity} -> {decision:?}"),
         Err(error) => eprintln!("footman: {error}"),
     }
 }
