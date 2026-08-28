@@ -266,3 +266,65 @@ fn the_release_of_a_passed_key_passes() {
 
     assert_eq!(core.on_event(KeyEvent::Up(Key::J)).verdict, Verdict::Pass);
 }
+
+/// Pausing uninstalls the hook, so everything that happens while Footman is
+/// paused happens unseen: keys go down and come up with no event reaching the
+/// Core. Whatever it believed about the keyboard when it stopped watching is
+/// worthless by the time it starts again.
+#[test]
+fn forgetting_clears_what_the_core_believed_was_held() {
+    let mut core = core();
+    core.on_event(KeyEvent::Down(Key::CapsLock));
+    core.on_event(KeyEvent::Down(Key::J));
+
+    core.forget();
+
+    // Hyper is no longer held, so an ordinary key is nobody's business.
+    assert_eq!(core.on_event(KeyEvent::Down(Key::J)).verdict, Verdict::Pass);
+}
+
+/// The other half, and the one that would strand a key: a release arriving for
+/// a press the Core no longer remembers must pass, not be swallowed as though
+/// Footman had eaten the press.
+#[test]
+fn a_release_from_before_a_pause_passes() {
+    let mut core = core();
+    core.on_event(KeyEvent::Down(Key::CapsLock));
+    core.on_event(KeyEvent::Down(Key::J));
+
+    core.forget();
+
+    assert_eq!(core.on_event(KeyEvent::Up(Key::J)).verdict, Verdict::Pass);
+    assert_eq!(
+        core.on_event(KeyEvent::Up(Key::CapsLock)).verdict,
+        Verdict::Pass
+    );
+}
+
+/// Modifiers too: Shift held when Footman stopped watching and released while
+/// it was not looking would otherwise leave every later Chord asking for
+/// `Shift+something`.
+#[test]
+fn forgetting_clears_stale_modifiers() {
+    let mut core = core();
+    core.on_event(KeyEvent::Down(Key::Shift));
+
+    core.forget();
+    core.on_event(KeyEvent::Down(Key::CapsLock));
+
+    // With Shift forgotten, this is the plain Chord, not the shifted one.
+    let mut shifted = Core::new(
+        Key::CapsLock,
+        TapAction::None,
+        BindingTable::from([(Chord::key(Key::J).with(Modifiers::SHIFT), chrome())]),
+    );
+    shifted.on_event(KeyEvent::Down(Key::Shift));
+    shifted.forget();
+    shifted.on_event(KeyEvent::Down(Key::CapsLock));
+
+    assert!(shifted.on_event(KeyEvent::Down(Key::J)).effect.is_none());
+    assert_eq!(
+        core.on_event(KeyEvent::Down(Key::J)).verdict,
+        Verdict::Suppress
+    );
+}

@@ -54,6 +54,7 @@ windows = { version = "0.62", features = [
 ] }
 
 [target."cfg(windows)".dependencies]
+tray-icon = "0.24"
 # The Windows Shell: the low-level keyboard hook and its message loop (slice 3),
 # and the window enumeration, identity cascade and activation the App Action
 # needs (slice 4, ADR-0003).

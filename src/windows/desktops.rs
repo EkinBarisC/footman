@@ -11,14 +11,11 @@
 //! carry the stuck-modifier risk that decision rejected.
 
 use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_BINARY, RegGetValueW};
-use windows::Win32::UI::Input::KeyboardAndMouse::{
-    INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput, VIRTUAL_KEY,
-    VK_CONTROL, VK_LEFT, VK_LWIN, VK_RIGHT,
-};
+use windows::Win32::UI::Input::KeyboardAndMouse::{VK_CONTROL, VK_LEFT, VK_LWIN, VK_RIGHT};
 
 use windows::core::{HSTRING, PCWSTR};
 
-use super::hook::FOOTMAN_SIGNATURE;
+use super::synthetic::{press, release, send};
 
 /// Where Windows keeps the desktop list. Undocumented, and verified live on the
 /// reference machine: `CurrentVirtualDesktop` updates the moment the user
@@ -162,35 +159,5 @@ pub fn walk(step: Move) {
     batch.push(release(VK_LWIN));
     batch.push(release(VK_CONTROL));
 
-    unsafe {
-        SendInput(&batch, size_of::<INPUT>() as i32);
-    }
-}
-
-fn press(key: VIRTUAL_KEY) -> INPUT {
-    stroke(key, Default::default())
-}
-
-fn release(key: VIRTUAL_KEY) -> INPUT {
-    stroke(key, KEYEVENTF_KEYUP)
-}
-
-fn stroke(
-    key: VIRTUAL_KEY,
-    flags: windows::Win32::UI::Input::KeyboardAndMouse::KEYBD_EVENT_FLAGS,
-) -> INPUT {
-    INPUT {
-        r#type: INPUT_KEYBOARD,
-        Anonymous: INPUT_0 {
-            ki: KEYBDINPUT {
-                wVk: key,
-                wScan: 0,
-                dwFlags: flags,
-                time: 0,
-                // Stamped so the hook recognises Footman's own work and does
-                // not feed it back into the Core.
-                dwExtraInfo: FOOTMAN_SIGNATURE,
-            },
-        },
-    }
+    send(&batch);
 }

@@ -13,12 +13,14 @@ use serde::{Deserialize, Serialize};
 
 mod app;
 mod config;
+mod tray;
 
 #[cfg(windows)]
 pub mod windows;
 
 pub use app::{AppTarget, Window, choose_window};
 pub use config::{Config, ConfigError, Loaded, Warning};
+pub use tray::{Click, Duty, TrayEffect};
 /// Declares the key set once, and derives the enum, its parser and its display
 /// from that single table so the three can never drift apart. The name in each
 /// row is exactly what a Chord is written with in the config file.
@@ -394,6 +396,20 @@ impl Core {
         }
     }
 
+    /// Drops everything the Core believed about the keyboard.
+    ///
+    /// Called when Footman stops or starts watching (DESIGN.md §10). While it
+    /// is paused the hook is uninstalled, so keys go down and come up unseen:
+    /// anything remembered from before is not merely stale but wrong, and
+    /// acting on it would swallow a release whose press the application already
+    /// received.
+    pub fn forget(&mut self) {
+        self.held.clear();
+        self.swallowed.clear();
+        self.mods = Modifiers::NONE;
+        self.chord_fired = false;
+    }
+
     pub fn on_event(&mut self, event: KeyEvent) -> Outcome {
         match event {
             KeyEvent::Down(key) => self.on_down(key),
@@ -410,6 +426,7 @@ impl Core {
 
         if key == self.hyper {
             self.chord_fired = false;
+            self.swallowed.insert(key);
             return Outcome::suppress();
         }
         if let Some(modifier) = key.as_modifier() {
@@ -455,6 +472,14 @@ impl Core {
             } else {
                 Outcome::pass()
             };
+        }
+
+        // A release whose press Footman never saw — the key was already down
+        // when the hook was installed, or went down while Footman was paused.
+        // The application has the press; suppressing the release would strand
+        // the key held forever.
+        if !swallowed {
+            return Outcome::pass();
         }
 
         // Tap is not a duration: it is simply "Hyper came back up and no Chord
