@@ -46,6 +46,7 @@ integration-test = []
 # The end-to-end test inspects Windows' own input state to check its premises.
 windows = { version = "0.62", features = [
     "Win32_Foundation",
+    "Win32_System_Registry",
     "Win32_System_Threading",
     "Win32_System_Variant",
     "Win32_UI_Input_KeyboardAndMouse",
@@ -65,6 +66,7 @@ windows = { version = "0.62", features = [
     "Win32_System_Com_StructuredStorage",
     "Win32_System_LibraryLoader",
     "Win32_System_SystemInformation",
+    "Win32_System_Registry",
     "Win32_System_Threading",
     "Win32_System_Variant",
     "Win32_UI_Input_KeyboardAndMouse",

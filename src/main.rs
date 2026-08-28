@@ -15,6 +15,9 @@ fn main() {
         // Runs one App Action without involving the keyboard, so the matrix in
         // DESIGN.md §12 can be walked deliberately rather than by pressing a
         // Chord and hoping.
+        // The other half of the §12 matrix: switch desktops without pressing a
+        // Chord, and say where Windows thinks we are first.
+        Some("desktop") => desktop(std::env::args().nth(2)),
         Some("focus") => match std::env::args().nth(2) {
             Some(identity) => focus(&identity),
             None => eprintln!("footman: focus needs an App Identity, as `footman windows` prints"),
@@ -49,6 +52,26 @@ fn focus(identity: &str) {
     footman::windows::init_thread();
     match footman::windows::focus(identity) {
         Ok(decision) => println!("footman: {identity} -> {decision:?}"),
+        Err(error) => eprintln!("footman: {error}"),
+    }
+}
+
+#[cfg(windows)]
+fn desktop(index: Option<String>) {
+    match footman::windows::position() {
+        Ok(here) => println!("footman: desktop {} of {}", here.current, here.count),
+        Err(error) => return eprintln!("footman: {error}"),
+    }
+
+    let Some(index) = index else { return };
+    match index
+        .parse()
+        .map_err(|_| format!("{index} is not a desktop number"))
+    {
+        Ok(index) => match footman::windows::switch_to(index) {
+            Ok(()) => println!("footman: switched to desktop {index}"),
+            Err(error) => eprintln!("footman: {error}"),
+        },
         Err(error) => eprintln!("footman: {error}"),
     }
 }

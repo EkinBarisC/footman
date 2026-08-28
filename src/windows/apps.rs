@@ -334,8 +334,21 @@ fn launch(identity: &str) -> Result<(), String> {
         Some(Launch::Executable(path)) => path,
         None => return Err(format!("unknown App Identity scheme: {identity}")),
     };
+    hand_to_shell(&target).map_err(|_| format!("could not launch {identity}"))
+}
 
-    let target = HSTRING::from(&target);
+/// The Open Action: hand a URL, file or folder to whatever Windows has
+/// registered for it (DESIGN.md §3).
+///
+/// This is the same call that launches an application by path, because it is
+/// the same question — "Windows, you deal with this" — and the answer is the
+/// user's own default handler either way.
+pub fn open(target: &str) -> Result<(), String> {
+    hand_to_shell(target).map_err(|_| format!("could not open {target}"))
+}
+
+fn hand_to_shell(target: &str) -> Result<(), ()> {
+    let target = HSTRING::from(target);
     let result = unsafe {
         ShellExecuteW(
             None,
@@ -352,7 +365,7 @@ fn launch(identity: &str) -> Result<(), String> {
     if result.0 as usize > 32 {
         Ok(())
     } else {
-        Err(format!("could not launch {identity}"))
+        Err(())
     }
 }
 
