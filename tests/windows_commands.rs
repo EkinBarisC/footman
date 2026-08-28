@@ -11,7 +11,7 @@
 
 use std::time::{Duration, Instant};
 
-use footman::windows::run_command;
+use footman::windows::{CREATE_NEW_CONSOLE, CREATE_NO_WINDOW, creation_flags, run_command};
 
 /// Commands are started and let go of, so the effect has to be waited for.
 fn wait_for(path: &std::path::Path) -> bool {
@@ -73,4 +73,22 @@ fn shell_syntax_is_honoured_rather_than_escaped() {
 #[test]
 fn a_command_that_cannot_be_found_is_not_footmans_failure() {
     assert!(run_command("footman-no-such-command", false).is_ok());
+}
+
+/// A visible command must get a console of its *own*.
+///
+/// Left to itself, a child console process inherits its parent's console, so a
+/// command bound with `show_window = true` printed into whatever terminal
+/// Footman happened to be started from — and printed into a fresh console of
+/// its own when Footman was started from none. The window a user asked for has
+/// to be asked for explicitly, or the behaviour depends on how Footman was
+/// launched.
+#[test]
+fn a_visible_command_is_given_a_console_of_its_own() {
+    assert_eq!(creation_flags(true), CREATE_NEW_CONSOLE);
+}
+
+#[test]
+fn a_hidden_command_is_given_no_console_at_all() {
+    assert_eq!(creation_flags(false), CREATE_NO_WINDOW);
 }
