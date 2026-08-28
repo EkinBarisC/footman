@@ -8,19 +8,21 @@
 //! Dispatcher over a channel. Nothing else happens on this thread.
 
 use std::cell::RefCell;
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{self, Sender};
+use std::thread;
 
 use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::SystemInformation::GetTickCount64;
+use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, DispatchMessageW, GetMessageW, HHOOK, KBDLLHOOKSTRUCT, MSG, SetTimer,
-    SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP,
-    WM_SYSKEYDOWN, WM_SYSKEYUP, WM_TIMER,
+    CallNextHookEx, DispatchMessageW, GetMessageW, HHOOK, KBDLLHOOKSTRUCT, MSG, PostThreadMessageW,
+    SetTimer, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_APP,
+    WM_KEYDOWN, WM_KEYUP, WM_QUIT, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_TIMER,
 };
 
 use super::{Health, HookWatch, vk_to_key};
-use crate::{Core, Effect, KeyEvent, Verdict};
+use crate::{Core, Duty, Effect, KeyEvent, Verdict};
 
 /// How long the hook may see nothing before silence becomes evidence.
 const QUIET_MS: u64 = 30_000;
@@ -61,9 +63,72 @@ thread_local! {
     static STATE: RefCell<Option<HookState>> = const { RefCell::new(None) };
 }
 
-/// Installs the hook and runs its message loop until the thread is asked to
-/// quit. Blocks; call it on a thread of its own.
-pub fn run(core: Core, effects: Sender<Effect>) -> Result<(), HookError> {
+/// A handle on the running hook thread, from any other thread.
+///
+/// Everything it can ask for is a message posted to that thread rather than a
+/// lock taken on shared state: the hook thread must never wait on anything, and
+/// a mutex on this path could stall a keystroke.
+pub struct Hook {
+    thread: u32,
+}
+
+/// Stand down: uninstall the hook and leave the keyboard entirely normal.
+const PAUSE: u32 = WM_APP + 1;
+/// Install it again.
+const RESUME: u32 = WM_APP + 2;
+
+impl Hook {
+    pub fn pause(&self) {
+        self.post(PAUSE);
+    }
+
+    pub fn resume(&self) {
+        self.post(RESUME);
+    }
+
+    /// Ends the message loop, which uninstalls the hook on its way out.
+    pub fn quit(&self) {
+        self.post(WM_QUIT);
+    }
+
+    fn post(&self, message: u32) {
+        unsafe {
+            let _ = PostThreadMessageW(self.thread, message, WPARAM(0), LPARAM(0));
+        }
+    }
+}
+
+/// Starts the hook on a thread of its own and returns a handle to it.
+///
+/// `duty` receives every change of state, including the first: whether the hook
+/// installed at all is reported there rather than returned, because a Footman
+/// that could not install must stay alive to be retried (DESIGN.md §7).
+/// `wake` is the thread to nudge when that happens, so a tray sitting in
+/// `GetMessage` notices.
+pub fn spawn(
+    core: Core,
+    effects: Sender<Effect>,
+    duty: Sender<Duty>,
+    wake: u32,
+) -> Result<Hook, HookError> {
+    let (tell, heard) = mpsc::channel();
+
+    thread::spawn(move || {
+        let thread = unsafe { GetCurrentThreadId() };
+        if tell.send(thread).is_err() {
+            return;
+        }
+        run(core, effects, duty, wake);
+    });
+
+    heard
+        .recv()
+        .map(|thread| Hook { thread })
+        .map_err(|_| HookError("the hook thread stopped before it started".to_string()))
+}
+
+/// Installs the hook and runs its message loop until asked to quit.
+fn run(core: Core, effects: Sender<Effect>, duty: Sender<Duty>, wake: u32) {
     STATE.with(|state| {
         *state.borrow_mut() = Some(HookState {
             core,
@@ -72,7 +137,7 @@ pub fn run(core: Core, effects: Sender<Effect>) -> Result<(), HookError> {
         });
     });
 
-    let mut hook = install()?;
+    let mut hook = start(&duty, wake);
 
     // A message loop is not optional: Windows delivers low-level hook callbacks
     // to the installing thread through it, so a thread that never pumps
@@ -82,17 +147,66 @@ pub fn run(core: Core, effects: Sender<Effect>) -> Result<(), HookError> {
 
         let mut message = MSG::default();
         while GetMessageW(&mut message, None, 0, 0).as_bool() {
-            if message.message == WM_TIMER {
-                hook = supervise(hook)?;
+            match message.message {
+                // Only while working. A paused Footman is *meant* to see
+                // nothing, and the watchdog reads silence as death — left to
+                // itself it would reinstall the hook the user just asked to be
+                // rid of.
+                WM_TIMER if hook.is_some() => hook = supervise(hook),
+                PAUSE => {
+                    hook = stop(hook);
+                    report(&duty, wake, Duty::Paused);
+                }
+                RESUME if hook.is_none() => hook = start(&duty, wake),
+                _ => {}
             }
             let _ = TranslateMessage(&message);
             DispatchMessageW(&message);
         }
 
-        let _ = UnhookWindowsHookEx(hook);
+        stop(hook);
     }
+}
 
-    Ok(())
+/// Installs the hook and says so. The Core forgets first: whatever it believed
+/// about the keyboard from before is worthless, because keys went down and came
+/// up unseen while the hook was gone.
+fn start(duty: &Sender<Duty>, wake: u32) -> Option<HHOOK> {
+    STATE.with(|state| {
+        if let Some(state) = state.borrow_mut().as_mut() {
+            state.core.forget();
+            state.watch.reinstalled(unsafe { GetTickCount64() });
+        }
+    });
+
+    match install() {
+        Ok(hook) => {
+            report(duty, wake, Duty::Active);
+            Some(hook)
+        }
+        Err(_) => {
+            report(duty, wake, Duty::Broken);
+            None
+        }
+    }
+}
+
+fn stop(hook: Option<HHOOK>) -> Option<HHOOK> {
+    if let Some(hook) = hook {
+        unsafe {
+            let _ = UnhookWindowsHookEx(hook);
+        }
+    }
+    None
+}
+
+fn report(duty: &Sender<Duty>, wake: u32, state: Duty) {
+    let _ = duty.send(state);
+    // A tray blocked in GetMessage would not look at the channel until
+    // something else happened to arrive.
+    unsafe {
+        let _ = PostThreadMessageW(wake, WM_APP, WPARAM(0), LPARAM(0));
+    }
 }
 
 fn install() -> Result<HHOOK, HookError> {
@@ -106,7 +220,7 @@ fn install() -> Result<HHOOK, HookError> {
 }
 
 /// Reinstalls the hook if the evidence says Windows has dropped it.
-fn supervise(hook: HHOOK) -> Result<HHOOK, HookError> {
+fn supervise(hook: Option<HHOOK>) -> Option<HHOOK> {
     let now = unsafe { GetTickCount64() };
     let health = STATE.with(|state| {
         state
@@ -116,19 +230,20 @@ fn supervise(hook: HHOOK) -> Result<HHOOK, HookError> {
     });
 
     if health != Some(Health::Dead) {
-        return Ok(hook);
+        return hook;
     }
 
-    unsafe {
-        let _ = UnhookWindowsHookEx(hook);
-    }
-    let fresh = install()?;
+    stop(hook);
+    // A reinstall that fails leaves nothing installed and the watchdog will try
+    // again on the next tick. It does not report Broken: an unattended retry is
+    // not news, and the tray flickering between states would be.
+    let fresh = install().ok();
     STATE.with(|state| {
         if let Some(s) = state.borrow_mut().as_mut() {
             s.watch.reinstalled(now);
         }
     });
-    Ok(fresh)
+    fresh
 }
 
 /// Tick of the last input of any kind, as the system saw it.

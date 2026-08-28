@@ -6,6 +6,7 @@
 //! than the callback's budget allows (DESIGN.md §9.1).
 
 use std::cell::OnceCell;
+use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND, LPARAM, MAX_PATH};
 use windows::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute};
@@ -23,9 +24,11 @@ use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
 use windows::Win32::UI::Shell::PropertiesSystem::{IPropertyStore, SHGetPropertyStoreForWindow};
 use windows::Win32::UI::Shell::{IVirtualDesktopManager, ShellExecuteW, VirtualDesktopManager};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GW_OWNER, GWL_EXSTYLE, GetForegroundWindow, GetWindow, GetWindowLongPtrW,
-    GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
-    SW_RESTORE, SW_SHOWNORMAL, SetForegroundWindow, ShowWindow, WS_EX_TOOLWINDOW,
+    BringWindowToTop, EnumWindows, GW_OWNER, GWL_EXSTYLE, GetForegroundWindow, GetWindow,
+    GetWindowLongPtrW, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
+    IsWindowVisible, SPI_GETFOREGROUNDLOCKTIMEOUT, SPI_SETFOREGROUNDLOCKTIMEOUT, SPIF_SENDCHANGE,
+    SW_RESTORE, SW_SHOWNORMAL, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetForegroundWindow,
+    ShowWindow, SwitchToThisWindow, SystemParametersInfoW, WS_EX_TOOLWINDOW,
 };
 use windows::core::{HSTRING, PCWSTR, PWSTR};
 
@@ -45,7 +48,16 @@ pub fn focus(identity: &str) -> Result<AppTarget, String> {
     let target = choose_window(&windows, foreground);
     match target {
         AppTarget::Nothing => {}
-        AppTarget::Raise(id) => raise(HWND(id as *mut _)),
+        AppTarget::Raise(id) => {
+            // Reported rather than swallowed: when Windows refuses, it flashes
+            // the taskbar button, and a user watching that happen deserves to
+            // find out why from Footman rather than guess.
+            if !raise(HWND(id as *mut _)) {
+                return Err(
+                    "Windows would not let Footman bring that window to the front".to_string(),
+                );
+            }
+        }
         AppTarget::Launch => launch(identity)?,
     }
     Ok(target)
@@ -303,28 +315,116 @@ fn on_current_desktop(hwnd: HWND) -> bool {
 }
 
 /// Brings a window to the front, restoring it if it was minimised.
-fn raise(hwnd: HWND) {
+///
+/// Windows refuses `SetForegroundWindow` to a process that does not already own
+/// the foreground, to stop applications stealing focus, and when it refuses it
+/// flashes the taskbar button instead of raising the window. Footman is exactly
+/// the kind of process it refuses: a long-running background one that the user
+/// never clicked on.
+///
+/// So this escalates, least invasive first, and **checks whether the window
+/// actually arrived** rather than trusting a return value — `SetForegroundWindow`
+/// reports success for the flash.
+fn raise(hwnd: HWND) -> bool {
     unsafe {
         if IsIconic(hwnd).as_bool() {
             let _ = ShowWindow(hwnd, SW_RESTORE);
         }
+    }
 
-        // Windows refuses `SetForegroundWindow` to a process that does not
-        // already own the foreground, to stop applications stealing focus.
-        // Attaching to the foreground window's input queue makes this process
-        // part of that conversation for the length of the call.
-        let foreground = GetForegroundWindow();
+    // Attaching to the foreground window's input queue makes this process part
+    // of that conversation, which is enough whenever the foreground application
+    // is an ordinary one.
+    if attached_foreground(hwnd) {
+        return true;
+    }
+
+    // What the taskbar itself uses to switch windows. Documented as not for
+    // general use, and the only thing short of changing a system setting that
+    // reliably crosses the foreground lock.
+    unsafe { SwitchToThisWindow(hwnd, true) };
+    if arrived(hwnd) {
+        return true;
+    }
+
+    // Last resort: the lock exists because of a timeout, so remove the timeout
+    // for the length of one call and put it back. Restored on every path,
+    // because leaving it at zero would let anything on the machine steal focus.
+    let previous = foreground_lock_timeout();
+    set_foreground_lock_timeout(0);
+    let raised = attached_foreground(hwnd);
+    set_foreground_lock_timeout(previous);
+    raised
+}
+
+/// One attempt, with this thread attached to both the window we are leaving and
+/// the one we are going to.
+fn attached_foreground(hwnd: HWND) -> bool {
+    unsafe {
         let ours = GetCurrentThreadId();
-        let theirs = GetWindowThreadProcessId(foreground, None);
-        let attached =
-            theirs != 0 && theirs != ours && AttachThreadInput(ours, theirs, true).as_bool();
+        let leaving = GetWindowThreadProcessId(GetForegroundWindow(), None);
+        let arriving = GetWindowThreadProcessId(hwnd, None);
 
+        let attached: Vec<u32> = [leaving, arriving]
+            .into_iter()
+            .filter(|&thread| thread != 0 && thread != ours)
+            .filter(|&thread| AttachThreadInput(ours, thread, true).as_bool())
+            .collect();
+
+        let _ = BringWindowToTop(hwnd);
         let _ = SetForegroundWindow(hwnd);
         let _ = SetFocus(Some(hwnd));
 
-        if attached {
-            let _ = AttachThreadInput(ours, theirs, false);
+        for thread in attached {
+            let _ = AttachThreadInput(ours, thread, false);
         }
+    }
+    arrived(hwnd)
+}
+
+/// Whether the window is now the foreground one.
+///
+/// Polled rather than asked once: the foreground change is handled by the
+/// window's own thread, so it is not always in place by the time
+/// `SetForegroundWindow` returns.
+fn arrived(hwnd: HWND) -> bool {
+    /// Long enough for another process to answer, short enough that three
+    /// failed attempts still feel instant.
+    const PATIENCE: Duration = Duration::from_millis(150);
+
+    let deadline = Instant::now() + PATIENCE;
+    loop {
+        if unsafe { GetForegroundWindow() } == hwnd {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn foreground_lock_timeout() -> u32 {
+    let mut timeout = 0u32;
+    unsafe {
+        let _ = SystemParametersInfoW(
+            SPI_GETFOREGROUNDLOCKTIMEOUT,
+            0,
+            Some((&raw mut timeout).cast()),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        );
+    }
+    timeout
+}
+
+fn set_foreground_lock_timeout(timeout: u32) {
+    unsafe {
+        let _ = SystemParametersInfoW(
+            SPI_SETFOREGROUNDLOCKTIMEOUT,
+            0,
+            Some(timeout as *mut _),
+            SPIF_SENDCHANGE,
+        );
     }
 }
 

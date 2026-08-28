@@ -315,7 +315,7 @@ Each slice states how it is verified. Slices 0-2 are complete.
 | 3 | **Hook + Dispatcher** — done — hook, channel, worker, watchdog | Callback budget measured; liveness inferred rather than queried (ADR-0006); end-to-end verified by hand, since `SendInput` does not reach hooks on the development machine |
 | 4 | **App Action** — done — find, raise, cycle, cross-desktop rule | Manual matrix: running/not × one window/several × this desktop/another; cascade and ghost rule measured on the reference machine |
 | 5 | **Open, Run, Desktop Actions** — done | Manual; desktop index verified against the registry |
-| 6 | **Tray + Pause** | Manual |
+| 6 | **Tray + Pause** — done — and the Tap Action, which no slice had claimed | Manual: the icon changes state, Pause returns the keyboard to normal, Resume restores it |
 | 7 | **Settings window** | Manual; Chord capture and application picker |
 | 8 | **Self-install, Scheduled Task, Uninstall** | Install and uninstall on a clean VM, verify no residue |
 | 9 | **README, CI, release** | — |

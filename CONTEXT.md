@@ -83,6 +83,19 @@ applications, finds and raises windows, changes desktops. Selected at compile
 time; never abstracted behind a trait while only one exists.
 _Avoid_: backend, adapter, driver, platform layer
 
+**Duty**:
+Whether Footman is watching the keyboard: Active, Paused, or Broken. Named for
+what the user sees rather than for the hook, because a paused Footman and a
+broken one both leave the keyboard entirely normal and the only difference
+between them is whose decision that was.
+_Avoid_: mode, status, enabled, running
+
+**Pause**:
+Standing down at the user's request: the hook is uninstalled, not merely
+ignoring events. For gaming, screen sharing, or handing the keyboard to someone
+else. Offered only from the tray — a shortcut that disables shortcuts is a trap.
+_Avoid_: disable, suspend, off, stop
+
 **Dispatcher**:
 The worker that executes Actions off the hook thread. Exists because the hook
 thread must return within the operating system's timeout or the hook is silently

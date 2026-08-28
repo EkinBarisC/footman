@@ -68,9 +68,8 @@ fn real_keystrokes_reach_the_core_and_produce_an_effect() {
     table.add(Chord::key(BOUND), chrome());
     let core = Core::new(HYPER, TapAction::None, table);
 
-    thread::spawn(move || {
-        footman::windows::run(core, effects).expect("the hook must install");
-    });
+    let (duty, _duties) = mpsc::channel();
+    footman::windows::spawn(core, effects, duty, 0).expect("the hook must start");
     thread::sleep(SETTLE);
 
     // Hyper down, C, Hyper up — typed as a human would.
@@ -115,9 +114,8 @@ fn injected_input_from_elsewhere_is_treated_as_real() {
     core.on_event(KeyEvent::Up(BOUND));
     core.on_event(KeyEvent::Up(HYPER));
 
-    thread::spawn(move || {
-        footman::windows::run(core, effects).expect("the hook must install");
-    });
+    let (duty, _duties) = mpsc::channel();
+    footman::windows::spawn(core, effects, duty, 0).expect("the hook must start");
     thread::sleep(SETTLE);
 
     send(HYPER, true);

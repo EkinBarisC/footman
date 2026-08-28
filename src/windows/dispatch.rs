@@ -8,8 +8,11 @@
 use std::sync::mpsc::Receiver;
 
 use super::commands::run;
+use super::synthetic;
 use super::{apps, desktops};
-use crate::{Action, Effect};
+use windows::Win32::UI::Input::KeyboardAndMouse::VK_ESCAPE;
+
+use crate::{Action, Effect, TapAction};
 
 /// Runs until the hook thread goes away and the channel closes. Blocks; call it
 /// on a thread of its own.
@@ -25,9 +28,15 @@ pub fn dispatch(inbox: Receiver<Effect>) {
                 show_window,
             }) => run(command, show_window).err(),
             Effect::Run(Action::Desktop { index }) => desktops::switch_to(index).err(),
-            // The Tap Action (DESIGN.md §2.3) needs synthetic input of its own
-            // and arrives with slice 6.
-            Effect::Tap(tap) => Some(format!("{tap} is not implemented yet")),
+            // The Tap Action (DESIGN.md §2.3): Hyper pressed and released with
+            // no Chord in between. `TapAction::None` never reaches here — the
+            // Core suppresses it rather than producing an Effect — so the only
+            // thing left to emit is the key the user asked for.
+            Effect::Tap(TapAction::Escape) => {
+                synthetic::tap(VK_ESCAPE);
+                None
+            }
+            Effect::Tap(TapAction::None) => None,
         };
 
         // An Action that fails must not take the process with it: the keyboard
