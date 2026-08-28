@@ -314,7 +314,7 @@ Each slice states how it is verified. Slices 0-2 are complete.
 | 2 | **Config** — done — schema, load, validate, report | Round-trip tests; malformed fixtures match the §7 table |
 | 3 | **Hook + Dispatcher** — done — hook, channel, worker, watchdog | Callback budget measured; liveness inferred rather than queried (ADR-0006); end-to-end verified by hand, since `SendInput` does not reach hooks on the development machine |
 | 4 | **App Action** — done — find, raise, cycle, cross-desktop rule | Manual matrix: running/not × one window/several × this desktop/another; cascade and ghost rule measured on the reference machine |
-| 5 | **Open, Run, Desktop Actions** | Manual; desktop index verified against the registry |
+| 5 | **Open, Run, Desktop Actions** — done | Manual; desktop index verified against the registry |
 | 6 | **Tray + Pause** | Manual |
 | 7 | **Settings window** | Manual; Chord capture and application picker |
 | 8 | **Self-install, Scheduled Task, Uninstall** | Install and uninstall on a clean VM, verify no residue |

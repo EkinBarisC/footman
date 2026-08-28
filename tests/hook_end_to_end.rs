@@ -12,11 +12,18 @@
 //!
 //! **It does not pass on every machine, and a failure here is not necessarily a
 //! failure of Footman.** On the development machine these tests see zero hook
-//! callbacks even though `SendInput` reports success — and so does a bare
-//! reference hook that uses no Footman code at all. The likeliest cause is UIPI
-//! silently discarding injected input while a higher-privilege window (a
-//! uiAccess helper such as Raycast's) holds the foreground. Until that is
-//! settled, slice 3 is verified by running the binary and pressing keys.
+//! callbacks — and so does a bare reference hook that uses no Footman code at
+//! all.
+//!
+//! Slice 5 narrowed the cause without settling it. `SendInput` is not being
+//! discarded: the Desktop Action synthesises `Ctrl+Win+Left` the same way and
+//! Windows acts on it, which was watched happening. So injected input reaches
+//! the system but not this hook, which points at another low-level hook earlier
+//! in the chain suppressing it rather than at UIPI refusing the injection. A
+//! keyboard debouncer is installed on this machine and is the obvious suspect.
+//!
+//! Until that is settled, the hook is verified by running the binary and
+//! pressing keys.
 //!
 //! `--test-threads=1` is required: each test installs its own hook, and
 //! concurrent hooks in one process see each other's events.
