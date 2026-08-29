@@ -66,3 +66,49 @@ fn identities_compare_case_insensitively() {
 fn a_window_with_no_identity_at_all_matches_nothing() {
     assert!(!matches("aumid:Chrome", &[]));
 }
+
+/// What the shell's list of installed applications hands back, and why it
+/// cannot be used as an identity unaltered.
+///
+/// A packaged application's entry *is* its AUMID. A classic one's is a path
+/// relative to a known folder — `{6D809377-…}\7-Zip\7zFM.exe` — which the shell
+/// can launch but which matches no window: a running 7-Zip resolves to its
+/// executable path, not to that. Binding it verbatim would give a Chord that
+/// opens a second copy every time instead of raising the first.
+mod installed_entries {
+    use footman::windows::{Entry, entry_of};
+
+    #[test]
+    fn a_packaged_application_is_already_an_aumid() {
+        assert_eq!(
+            entry_of("Microsoft.WindowsNotepad_8wekyb3d8bbwe!App"),
+            Entry::Aumid("Microsoft.WindowsNotepad_8wekyb3d8bbwe!App".to_string())
+        );
+        assert_eq!(entry_of("Chrome"), Entry::Aumid("Chrome".to_string()));
+    }
+
+    #[test]
+    fn a_classic_application_is_a_path_under_a_known_folder() {
+        assert_eq!(
+            entry_of(r"{6D809377-6AF0-444B-8957-A3773F02200E}\7-Zip\7zFM.exe"),
+            Entry::UnderFolder {
+                folder: "{6D809377-6AF0-444B-8957-A3773F02200E}".to_string(),
+                relative: r"7-Zip\7zFM.exe".to_string(),
+            }
+        );
+    }
+
+    /// Anything that only looks like one. Treated as an AUMID, which is the
+    /// reading that still launches.
+    #[test]
+    fn a_name_that_is_not_shaped_like_one_is_left_alone() {
+        assert_eq!(
+            entry_of("{not-a-folder"),
+            Entry::Aumid("{not-a-folder".to_string())
+        );
+        assert_eq!(
+            entry_of(r"{6D809377-6AF0-444B-8957-A3773F02200E}"),
+            Entry::Aumid(r"{6D809377-6AF0-444B-8957-A3773F02200E}".to_string())
+        );
+    }
+}

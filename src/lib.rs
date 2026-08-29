@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 mod app;
 mod config;
+mod settings;
 mod tray;
 
 #[cfg(windows)]
@@ -20,6 +21,7 @@ pub mod windows;
 
 pub use app::{AppTarget, Window, choose_window};
 pub use config::{Config, ConfigError, Loaded, Warning};
+pub use settings::{Notice, Problem, Settings};
 pub use tray::{Click, Duty, TrayEffect};
 /// Declares the key set once, and derives the enum, its parser and its display
 /// from that single table so the three can never drift apart. The name in each
@@ -318,7 +320,7 @@ impl Outcome {
 }
 
 /// The set of Bindings in force.
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct BindingTable {
     bindings: HashMap<Chord, Action>,
 }
@@ -408,6 +410,24 @@ impl Core {
         self.swallowed.clear();
         self.mods = Modifiers::NONE;
         self.chord_fired = false;
+    }
+
+    /// A one-line account of what the Core currently believes, for a trace.
+    ///
+    /// Lives here rather than in the Shell because the questions it answers are
+    /// the Core's own: is Hyper held, and are there any Bindings to match. A
+    /// Chord that does nothing is one of those two being wrong, and from the
+    /// outside they look identical.
+    pub fn believes(&self) -> String {
+        let mut held: Vec<String> = self.held.iter().map(Key::to_string).collect();
+        held.sort();
+        format!(
+            "hyper={} held=[{}] mods={:?} bindings={}",
+            self.hyper,
+            held.join(" "),
+            self.mods,
+            self.bindings.sorted().len()
+        )
     }
 
     pub fn on_event(&mut self, event: KeyEvent) -> Outcome {

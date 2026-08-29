@@ -54,6 +54,7 @@ windows = { version = "0.62", features = [
 ] }
 
 [target."cfg(windows)".dependencies]
+eframe = { version = "0.34", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
 tray-icon = "0.24"
 # The Windows Shell: the low-level keyboard hook and its message loop (slice 3),
 # and the window enumeration, identity cascade and activation the App Action
@@ -72,6 +73,7 @@ windows = { version = "0.62", features = [
     "Win32_System_Variant",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
     "Win32_UI_Shell_PropertiesSystem",
     "Win32_UI_WindowsAndMessaging",
 ] }

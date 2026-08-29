@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::{Action, BindingTable, Chord, Key, TapAction};
 
 /// Everything the running Footman needs, as read from the file.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     pub hyper: Key,
     pub tap: TapAction,

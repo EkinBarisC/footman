@@ -63,3 +63,23 @@ impl HookWatch {
         }
     }
 }
+
+/// Reads a 32-bit tick count on the 64-bit clock.
+///
+/// `GetLastInputInfo` reports the shorter one and `GetTickCount64` the longer,
+/// and they agree only until the shorter wraps — about seven weeks after a
+/// machine is switched on. Compared raw after that, the system's last input
+/// looks like it happened at the dawn of the clock, `check` never sees the
+/// system get ahead of us, and the watchdog stops being able to notice a dead
+/// hook at all. Which is precisely the machine that has been running for weeks
+/// without a restart: the one that needs it.
+pub fn same_clock(now: u64, short: u32) -> u64 {
+    let lifted = (now & !0xFFFF_FFFF) | u64::from(short);
+    // The reading is of something that has already happened, so a value in the
+    // future means it belongs to the turn of the clock before this one.
+    if lifted > now {
+        lifted - (1 << 32)
+    } else {
+        lifted
+    }
+}
