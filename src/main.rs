@@ -1,9 +1,14 @@
 //! The Footman binary.
 //!
-//! It loads the config, starts the keyboard hook on its own thread and the
-//! Dispatcher on another, then sits in the tray. The settings window is slice 7;
-//! until then the tray offers Pause and Quit, and the subcommands below are how
-//! the manual checks in DESIGN.md §12 get run.
+//! Run with no arguments it loads the config, starts the keyboard hook on its
+//! own thread and the Dispatcher on another, then sits in the tray with the
+//! settings window.
+//!
+//! The subcommands are two different things. `install`, `uninstall` and `where`
+//! are features: installation is a copy of the executable the user is holding,
+//! and a terminal is where they are holding it. `windows`, `apps`, `desktop`
+//! and `focus` are diagnostics — they run one piece of Footman without the
+//! keyboard, which is how the manual checks in DESIGN.md §12 get run.
 
 fn main() {
     #[cfg(windows)]
@@ -31,6 +36,13 @@ fn main() {
             Some(identity) => focus(&identity),
             None => eprintln!("footman: focus needs an App Identity, as `footman windows` prints"),
         },
+        // Installation from the command line as well as from the settings
+        // window, because the thing being installed is a copy of the executable
+        // the user is holding, and a terminal is where they are holding it.
+        Some("install") => install(),
+        Some("uninstall") => uninstall(),
+        // What `install` and `uninstall` did or would do, without doing it.
+        Some("where") => where_(),
         Some(other) => eprintln!("footman: unknown command {other:?}"),
         None => windows_main(),
     }
@@ -83,6 +95,81 @@ fn desktop(index: Option<String>) {
         },
         Err(error) => eprintln!("footman: {error}"),
     }
+}
+
+/// Installs a copy and registers the logon task.
+#[cfg(windows)]
+fn install() {
+    use footman::windows::{install, task};
+
+    match install::install() {
+        Ok(copy) => println!("footman: installed at {}", copy.display()),
+        Err(error) => return eprintln!("footman: {error}"),
+    }
+    match install::home().map(|home| task::register(&install::copy_in(&home))) {
+        Ok(Ok(())) => println!("footman: registered the {} logon task", task::NAME),
+        Ok(Err(error)) | Err(error) => eprintln!("footman: {error}"),
+    }
+}
+
+/// Removes the task, the config directory and the installed copy.
+#[cfg(windows)]
+fn uninstall() {
+    use footman::{Config, windows::install};
+
+    let Some(path) = Config::default_path() else {
+        return eprintln!("footman: no config directory on this system");
+    };
+
+    match install::uninstall(&path) {
+        // The copy removes itself moments later, once this process is gone: a
+        // running executable cannot delete itself.
+        Ok(()) => println!("footman: removed. Nothing of Footman is left."),
+        Err(error) => eprintln!("footman: {error}"),
+    }
+}
+
+/// Says where everything is, which is what verifying an install comes down to.
+#[cfg(windows)]
+fn where_() {
+    use footman::{
+        Config,
+        windows::{install, task},
+    };
+
+    println!(
+        "running   {}",
+        std::env::current_exe()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|error| error.to_string())
+    );
+    match install::home() {
+        Ok(home) => println!(
+            "installed {} ({})",
+            install::copy_in(&home).display(),
+            if install::installed() {
+                "present"
+            } else {
+                "absent"
+            }
+        ),
+        Err(error) => println!("installed {error}"),
+    }
+    println!(
+        "config    {}",
+        Config::default_path()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "nowhere".to_string())
+    );
+    println!(
+        "task      {} ({})",
+        task::NAME,
+        if task::registered() {
+            "registered"
+        } else {
+            "not registered"
+        }
+    );
 }
 
 #[cfg(windows)]

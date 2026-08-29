@@ -324,9 +324,19 @@ nothing responds.
 
 Open source, MIT, GitHub, CI — the Bouncer skeleton.
 
-A single portable `.exe`, no installer; it self-installs to `%LOCALAPPDATA%` on
-first run (§8). **Uninstall** in the settings window removes the scheduled task,
-the config directory and the installed copy, leaving no trace.
+A single portable `.exe`, no installer. It installs itself to `%LOCALAPPDATA%`
+**when asked to** — by turning on *Start with Windows*, or by `footman install` —
+and not on first run, as this section first said. Copying yourself somewhere the
+user did not name, to solve a problem they have not said they have, is not a
+thing to do quietly. The trigger for it is autostart because that is the feature
+that needs it: a logon task has to name an absolute path, and the folder someone
+downloaded into is not one to build one on.
+
+**Uninstall**, in the settings window or as `footman uninstall`, removes the
+scheduled task, the config directory and the installed copy, leaving no trace.
+The copy goes last and by other hands — a running executable cannot delete
+itself, so the removal is handed to a process told to wait until this one has
+gone.
 
 No code signing in v1; SmartScreen will warn and the README will say so. Package
 manager manifests come after the product settles. The interface is English only;
@@ -346,7 +356,7 @@ Each slice states how it is verified. Slices 0-2 are complete.
 | 5 | **Open, Run, Desktop Actions** — done | Manual; desktop index verified against the registry |
 | 6 | **Tray + Pause** — done — and the Tap Action, which no slice had claimed | Manual: the icon changes state, Pause returns the keyboard to normal, Resume restores it |
 | 7 | **Settings window** — done | Manual; Chord capture and application picker. The picker's identities were checked against `footman windows`, so a chosen application both launches and matches |
-| 8 | **Self-install, Scheduled Task, Uninstall** | Install and uninstall on a clean VM, verify no residue |
+| 8 | **Self-install, Scheduled Task, Uninstall** — done | `footman where` before and after each of `install` and `uninstall`; the task definition's settings are asserted by name, since a `Run` value was rejected for what it could not say |
 | 9 | **README, CI, release** | — |
 
 The Core comes first so there is a testable heart before any OS is involved. The

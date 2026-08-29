@@ -9,9 +9,11 @@ mod desktops;
 mod dispatch;
 mod hook;
 mod identity;
+pub mod install;
 mod installed;
 mod keys;
 mod synthetic;
+pub mod task;
 mod ui;
 mod watch;
 

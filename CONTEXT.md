@@ -109,3 +109,22 @@ line that is only ever set goes stale under a form the user has since edited,
 and the window is hidden rather than closed, so it would still be there the next
 time they opened it.
 _Avoid_: status, message, toast, flash
+
+**Home**:
+The folder under `%LOCALAPPDATA%` holding the installed copy of Footman. A
+folder of its own rather than a loose executable, because Uninstall removes the
+folder and what it removes must never be able to contain anything else.
+_Avoid_: install dir, app data, program folder
+
+**Task**:
+The per-user Scheduled Task that starts Footman at logon. Not a `Run` registry
+value, which cannot say restart-on-failure, cannot avoid Windows' startup delay,
+and can be switched off from Task Manager by a user who does not know what they
+switched off — the three failure modes Footman exists to be free of.
+_Avoid_: startup entry, service, daemon, autorun
+
+**Uninstall**:
+Removing the Task, the config directory and the Home, leaving nothing. Offered
+from the settings window of the very copy being removed, which is why the last
+step outlives the process asking for it.
+_Avoid_: cleanup, remove, purge
