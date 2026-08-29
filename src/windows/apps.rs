@@ -17,18 +17,18 @@ use windows::Win32::System::Com::{
     CLSCTX_ALL, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree,
 };
 use windows::Win32::System::Threading::{
-    AttachThreadInput, GetCurrentThreadId, OpenProcess, PROCESS_NAME_FORMAT,
+    AttachThreadInput, GetCurrentProcessId, GetCurrentThreadId, OpenProcess, PROCESS_NAME_FORMAT,
     PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
 use windows::Win32::UI::Shell::PropertiesSystem::{IPropertyStore, SHGetPropertyStoreForWindow};
 use windows::Win32::UI::Shell::{IVirtualDesktopManager, ShellExecuteW, VirtualDesktopManager};
 use windows::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, EnumWindows, GW_OWNER, GWL_EXSTYLE, GetForegroundWindow, GetWindow,
-    GetWindowLongPtrW, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
-    IsWindowVisible, SPI_GETFOREGROUNDLOCKTIMEOUT, SPI_SETFOREGROUNDLOCKTIMEOUT, SPIF_SENDCHANGE,
-    SW_RESTORE, SW_SHOWNORMAL, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetForegroundWindow,
-    ShowWindow, SwitchToThisWindow, SystemParametersInfoW, WS_EX_TOOLWINDOW,
+    BringWindowToTop, EnumWindows, FindWindowW, GW_OWNER, GWL_EXSTYLE, GetForegroundWindow,
+    GetWindow, GetWindowLongPtrW, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
+    IsIconic, IsWindowVisible, SPI_GETFOREGROUNDLOCKTIMEOUT, SPI_SETFOREGROUNDLOCKTIMEOUT,
+    SPIF_SENDCHANGE, SW_RESTORE, SW_SHOWNORMAL, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+    SetForegroundWindow, ShowWindow, SwitchToThisWindow, SystemParametersInfoW, WS_EX_TOOLWINDOW,
 };
 use windows::core::{HSTRING, PCWSTR, PWSTR};
 
@@ -314,6 +314,19 @@ fn on_current_desktop(hwnd: HWND) -> bool {
     query().unwrap_or(true)
 }
 
+/// Brings Footman's own window to the front by its title.
+///
+/// The settings window needs exactly what the App Action needs, and for the
+/// same reason: Windows refuses the foreground to a background process, and
+/// Footman is one even when the window it is raising is its own.
+pub fn raise_named(title: &str) -> bool {
+    let title = HSTRING::from(title);
+    match unsafe { FindWindowW(PCWSTR::null(), PCWSTR(title.as_ptr())) } {
+        Ok(hwnd) if !hwnd.is_invalid() => raise(hwnd),
+        _ => false,
+    }
+}
+
 /// Brings a window to the front, restoring it if it was minimised.
 ///
 /// Windows refuses `SetForegroundWindow` to a process that does not already own
@@ -357,17 +370,35 @@ fn raise(hwnd: HWND) -> bool {
     raised
 }
 
+/// Whether attaching this thread's input queue to `thread` is worth doing.
+///
+/// Attached queues process input together, so an attachment is also a way to
+/// hand this thread over to another one: a partner that stops answering takes
+/// this thread with it. That is a fair price for crossing the foreground lock,
+/// and no price at all worth paying for a thread of Footman's own — Windows
+/// grants the foreground unconditionally to a process that already holds it, so
+/// when the window being left is the settings window there is nothing to buy.
+pub fn worth_attaching(thread: u32, ours: u32, same_process: bool) -> bool {
+    thread != 0 && thread != ours && !same_process
+}
+
 /// One attempt, with this thread attached to both the window we are leaving and
 /// the one we are going to.
 fn attached_foreground(hwnd: HWND) -> bool {
     unsafe {
         let ours = GetCurrentThreadId();
-        let leaving = GetWindowThreadProcessId(GetForegroundWindow(), None);
-        let arriving = GetWindowThreadProcessId(hwnd, None);
+        let us = GetCurrentProcessId();
+        let leaving = GetForegroundWindow();
+        let attach_to = [leaving, hwnd].map(|window| {
+            let mut process = 0u32;
+            let thread = GetWindowThreadProcessId(window, Some(&mut process));
+            (thread, process == us)
+        });
 
-        let attached: Vec<u32> = [leaving, arriving]
+        let attached: Vec<u32> = attach_to
             .into_iter()
-            .filter(|&thread| thread != 0 && thread != ours)
+            .filter(|&(thread, ours_too)| worth_attaching(thread, ours, ours_too))
+            .map(|(thread, _)| thread)
             .filter(|&thread| AttachThreadInput(ours, thread, true).as_bool())
             .collect();
 

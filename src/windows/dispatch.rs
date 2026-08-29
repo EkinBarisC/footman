@@ -20,6 +20,11 @@ pub fn dispatch(inbox: Receiver<Effect>) {
     apps::init_thread();
 
     for effect in inbox {
+        // Said out loud, because the alternative is a user pressing a Chord and
+        // having no way to tell whether nothing fired or whether something
+        // fired and failed to land. Those want opposite fixes.
+        println!("footman: {effect:?}");
+
         let failure = match effect {
             Effect::Run(Action::App { ref id }) => apps::focus(id).err(),
             Effect::Run(Action::Open { ref target }) => apps::open(target).err(),

@@ -100,3 +100,12 @@ fn a_desktop_that_does_not_exist_is_refused() {
     assert_eq!(steps_to(at(2, 3), 4), None);
     assert_eq!(steps_to(at(2, 3), 0), None);
 }
+
+/// Crossing two desktops is two arrow presses whatever is done about the
+/// animation between them: what `switch_to` suppresses is the drawing, not the
+/// journey.
+#[test]
+fn suppressing_the_animation_does_not_change_how_far_we_go() {
+    assert_eq!(steps_to(at(1, 4), 4), Some(Move::Right(3)));
+    assert_eq!(steps_to(at(3, 4), 1), Some(Move::Left(2)));
+}

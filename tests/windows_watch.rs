@@ -10,7 +10,7 @@
 
 #![cfg(windows)]
 
-use footman::windows::{Health, HookWatch};
+use footman::windows::{Health, HookWatch, same_clock};
 
 const QUIET: u64 = 30_000;
 
@@ -65,4 +65,27 @@ fn reinstalling_clears_the_suspicion() {
     watch.reinstalled(now);
 
     assert_eq!(watch.check(now + 1, 5_000), Health::Alive);
+}
+
+/// `GetLastInputInfo` reports a 32-bit tick count and `GetTickCount64` a
+/// 64-bit one. Comparing them raw works only until the shorter clock wraps,
+/// about seven weeks after a machine is switched on, after which the watchdog
+/// would decide the system had seen no input since 1970 and never reinstall a
+/// dead hook again. So the short reading is lifted into the long one's domain
+/// before anything is compared.
+#[test]
+fn a_short_tick_is_read_on_the_long_clock() {
+    assert_eq!(same_clock(5_000, 4_000), 4_000);
+}
+
+#[test]
+fn a_short_tick_after_a_wrap_is_still_in_the_past() {
+    const WRAP: u64 = 1 << 32;
+    // A second past the wrap; the last input was a second before it.
+    assert_eq!(same_clock(WRAP + 1_000, 0xFFFF_FC18), WRAP - 1_000);
+}
+
+#[test]
+fn the_two_clocks_can_agree_exactly() {
+    assert_eq!(same_clock(4_000, 4_000), 4_000);
 }

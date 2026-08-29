@@ -260,11 +260,17 @@ This is not negotiable and shapes the whole runtime:
 Launching an application, enumerating windows, or switching a desktop on the hook
 thread will trigger this. Therefore:
 
-- The hook thread only **decides** — a table lookup, microseconds — and posts the
+- The callback only **decides** — a table lookup, microseconds — and posts the
   resulting Action to the Dispatcher over a channel.
 - Every Action executes on the Dispatcher thread.
-- No lock is ever acquired while deciding.
+- The only lock taken while deciding is the one guarding the state itself, held
+  for that lookup and nothing else.
 - A watchdog periodically verifies the hook is alive and reinstalls it if not.
+
+Which thread the callback runs on is **not** something Footman can demonstrate,
+so nothing it reaches may depend on the answer: the state is shared rather than
+thread-local (ADR-0007). Anything the callback touches has to be reachable from
+a thread Footman never created.
 
 ## 10. Settings window and tray
 
@@ -279,8 +285,31 @@ user never types a key name as a string.
 **General** — Hyper Key, Tap Action, autostart toggle, config file path,
 Uninstall.
 
+A row is born wrong: no key chosen yet, and nothing to do. The form does not
+say so until it is asked to save, which is the first moment the answer matters —
+telling the user off for a state the form itself put them in is not validation.
+What it will not do is write an empty Binding: Save refuses, and from then on
+says what is wrong until it is right.
+
+Saving takes effect at once. The hook is not reinstalled for it — pressing Save
+must not make the keyboard flicker — the Core is replaced under it, and the
+window says which Hyper Key and how many Bindings are live so that nobody has to
+close it to find out.
+
+**Chords do not fire while this window itself holds the keyboard focus.** The
+cause was chased through slice 7 and not settled (ADR-0007); the behaviour is
+accepted rather than fixed, because this is the window where Chords are edited
+and not the one where they are used. Every other window, including one sitting
+behind this one, is unaffected.
+
 Choosing an `app` Action opens a list of installed applications with a filter
-box. This is not a palette: it lives inside the settings window, is used only
+box. The list comes from `AppsFolder`, the shell's own folder of everything
+installed, and what it hands back needs translating: a packaged application's
+entry is already an AUMID, but a classic one is a path relative to a known
+folder — `{6D809377-…}-ZipzFM.exe`. That launches but matches no window, so
+Footman resolves it to a `path:` identity, which is what a running copy answers
+to (ADR-0003). Bound verbatim it would give a Chord that opened a second copy
+every time instead of raising the first. This is not a palette: it lives inside the settings window, is used only
 while creating a Binding, and never appears on the hot path. An escape hatch
 allows picking an `.exe` or `.lnk` directly.
 
@@ -316,7 +345,7 @@ Each slice states how it is verified. Slices 0-2 are complete.
 | 4 | **App Action** — done — find, raise, cycle, cross-desktop rule | Manual matrix: running/not × one window/several × this desktop/another; cascade and ghost rule measured on the reference machine |
 | 5 | **Open, Run, Desktop Actions** — done | Manual; desktop index verified against the registry |
 | 6 | **Tray + Pause** — done — and the Tap Action, which no slice had claimed | Manual: the icon changes state, Pause returns the keyboard to normal, Resume restores it |
-| 7 | **Settings window** | Manual; Chord capture and application picker |
+| 7 | **Settings window** — done | Manual; Chord capture and application picker. The picker's identities were checked against `footman windows`, so a chosen application both launches and matches |
 | 8 | **Self-install, Scheduled Task, Uninstall** | Install and uninstall on a clean VM, verify no residue |
 | 9 | **README, CI, release** | — |
 

@@ -101,3 +101,11 @@ The worker that executes Actions off the hook thread. Exists because the hook
 thread must return within the operating system's timeout or the hook is silently
 uninstalled.
 _Avoid_: executor, runner, queue
+
+**Notice**:
+Something the settings window is saying — "Saved", or what needs fixing first —
+together with the moment it was said, so that it stops being shown. A status
+line that is only ever set goes stale under a form the user has since edited,
+and the window is hidden rather than closed, so it would still be there the next
+time they opened it.
+_Avoid_: status, message, toast, flash
