@@ -1,8 +1,9 @@
 //! The Footman binary.
 //!
 //! Run with no arguments it loads the config, starts the keyboard hook on its
-//! own thread and the Dispatcher on another, then sits in the tray with the
-//! settings window.
+//! own thread and the Dispatcher on another, then sits in the tray. Nothing
+//! opens by itself: the settings window is reached from the tray icon, and the
+//! logon task must not put anything on screen at all.
 //!
 //! The subcommands are two different things. `install`, `uninstall` and `where`
 //! are features: installation is a copy of the executable the user is holding,
@@ -10,7 +11,17 @@
 //! and `focus` are diagnostics — they run one piece of Footman without the
 //! keyboard, which is how the manual checks in DESIGN.md §12 get run.
 
+// Footman starts at logon and lives in the tray, so it must not own a console:
+// a console-subsystem executable started by the scheduler puts a terminal on
+// screen every time the user logs in, which is the one thing a background
+// launcher may not do. The subcommands still print — `attach_console` below
+// borrows the terminal they were typed into.
+#![windows_subsystem = "windows"]
+
 fn main() {
+    #[cfg(windows)]
+    attach_console();
+
     #[cfg(windows)]
     match std::env::args().nth(1).as_deref() {
         // A diagnostic, not a feature: it prints the same enumeration and the
@@ -49,6 +60,66 @@ fn main() {
 
     #[cfg(not(windows))]
     eprintln!("footman: only Windows is implemented so far (DESIGN.md §13)");
+}
+
+/// Borrows the terminal Footman was started from, if there is one.
+///
+/// A Windows-subsystem process starts with no console at all, so without this
+/// every subcommand would be silent — and the subcommands exist to be read.
+/// Attaching to the parent's console gives them somewhere to print when a
+/// person ran Footman, and fails harmlessly when the logon task did, which is
+/// exactly the distinction wanted: no console, no output, nothing on screen.
+///
+/// The shell does not wait for a Windows-subsystem process, so its prompt
+/// returns before the output arrives. That is cosmetic and the price of not
+/// flashing a terminal at every logon.
+#[cfg(windows)]
+fn attach_console() {
+    use std::os::windows::io::AsRawHandle;
+
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::Console::{
+        ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE,
+        SetStdHandle,
+    };
+
+    // No parent console: started by the scheduler, or from Explorer. Printing
+    // is discarded by the standard library rather than failing, so there is
+    // nothing further to arrange.
+    if unsafe { AttachConsole(ATTACH_PARENT_PROCESS) }.is_err() {
+        return;
+    }
+
+    // Attaching does not fill in standard handles the process already has — a
+    // redirect into a file, which must go on working — and a Windows-subsystem
+    // process launched from a terminal has none at all. So only the missing
+    // ones are opened, and only if any are.
+    let missing: Vec<_> = [STD_OUTPUT_HANDLE, STD_ERROR_HANDLE]
+        .into_iter()
+        .filter(|&which| match unsafe { GetStdHandle(which) } {
+            Ok(handle) => handle.is_invalid(),
+            Err(_) => true,
+        })
+        .collect();
+    if missing.is_empty() {
+        return;
+    }
+
+    let Ok(console) = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("CONOUT$")
+    else {
+        return;
+    };
+
+    let handle = HANDLE(console.as_raw_handle());
+    for which in missing {
+        let _ = unsafe { SetStdHandle(which, handle) };
+    }
+    // The handles just installed point at this console, so it has to outlive
+    // the file that opened it.
+    std::mem::forget(console);
 }
 
 /// Prints every window Footman can see, with the identities it answers to.

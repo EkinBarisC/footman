@@ -204,12 +204,18 @@ The governing rule, and the analogue of Bouncer's fail-open:
 
 | Situation | Behaviour |
 | --- | --- |
-| No config file (first run) | Write a default config with no Bindings, open the settings window |
+| No config file (first run) | Write a default config with no Bindings, and sit in the tray |
 | Malformed TOML | Load nothing, install no hook. Tray shows an error state; the settings window reports the problem with a line number |
 | One invalid Binding | Skip it, keep the rest, flag it in the settings window |
 | Duplicate Chord | First wins; the second is reported as a warning, never silently applied |
 | Hook cannot be installed | Tray enters an error state, retries with backoff, notifies the user. Never silently dead |
 | App Identity no longer resolves | The Chord is still suppressed; the Action fails with a notification and the Binding is flagged as broken |
+
+**Nothing opens by itself, first run included.** Most of Footman's runs are the
+logon task's, and a window that appears at logon is the behaviour a background
+launcher exists to avoid — there is no run on which it would be welcome and no
+way for the process to tell the two kinds apart worth trusting. The tray icon is
+the whole of the invitation, and the settings window is one click into it.
 
 Malformed TOML is deliberately fatal rather than best-effort. "Half my Bindings
 work and I don't know why" is an undiagnosable state; "nothing works and the tray
@@ -337,6 +343,14 @@ scheduled task, the config directory and the installed copy, leaving no trace.
 The copy goes last and by other hands — a running executable cannot delete
 itself, so the removal is handed to a process told to wait until this one has
 gone.
+
+**The executable owns no console.** It is built for the Windows subsystem, so
+the logon task starts it without putting a terminal on screen. The subcommands
+are still meant to be read, so Footman attaches to the console of whatever
+terminal it was typed into and prints there; started by the scheduler there is
+no such console, it attaches to nothing, and output is discarded. The visible
+Run Action is unaffected either way, because it asks for a console of its own
+rather than inheriting one (§3).
 
 No code signing in v1; SmartScreen will warn and the README will say so. Package
 manager manifests come after the product settles. The interface is English only;
