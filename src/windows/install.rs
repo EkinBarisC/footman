@@ -30,6 +30,23 @@ pub fn copy_in(home: &Path) -> PathBuf {
     home.join("footman.exe")
 }
 
+/// Where the copy being replaced is moved to.
+///
+/// Windows will not let a running executable be written over, but it will let
+/// one be renamed — the image stays mapped to the file wherever it goes. So
+/// installing over a Footman that is running moves the old copy aside and
+/// writes the new one into the name the Task points at.
+///
+/// Measured rather than assumed, on the reference machine: writing over the
+/// running copy fails and renaming it succeeds, which is the whole trick. What
+/// does *not* work is deleting it afterwards — that fails for as long as its
+/// process lives — so the displaced copy stays until the next install, which
+/// begins by clearing it. It sits inside the home for that reason: it is
+/// litter with a lifetime, and Uninstall takes the home whole.
+pub fn displaced_in(home: &Path) -> PathBuf {
+    home.join("footman.exe.old")
+}
+
 /// Whether this executable is the installed copy.
 ///
 /// Compared without case, because Windows does not distinguish paths by it and
@@ -59,9 +76,14 @@ pub fn installed() -> bool {
 
 /// Puts a copy in the home and returns where it went.
 ///
-/// Copying over a copy that is *running* would fail, which is why installing
-/// while already installed is not an error but a no-op: the file that is there
-/// is the file that would be written.
+/// Installing while already installed is a no-op: the file that is there is the
+/// file that would be written, and nothing can copy over itself.
+///
+/// Installing over an *older* copy is the case worth having. It is the ordinary
+/// one — the second time anybody upgrades — and until this it failed with
+/// `Access is denied` whenever that older copy happened to be running, which
+/// after logon it usually is. It is moved aside rather than written over, for
+/// the reason `displaced_in` gives.
 pub fn install() -> Result<PathBuf, String> {
     let home = home()?;
     let running = running()?;
@@ -73,10 +95,46 @@ pub fn install() -> Result<PathBuf, String> {
 
     std::fs::create_dir_all(&home)
         .map_err(|error| format!("could not make {}: {error}", home.display()))?;
-    std::fs::copy(&running, &copy)
-        .map_err(|error| format!("could not copy myself to {}: {error}", copy.display()))?;
+
+    let displaced = displaced_in(&home);
+    if copy.exists() {
+        displace(&copy, &displaced)?;
+    }
+
+    if let Err(error) = std::fs::copy(&running, &copy) {
+        // Put back what was moved. The Task names `copy` and nothing else, so
+        // a failed install that left that name empty would take autostart with
+        // it — an old Footman is a great deal better than none.
+        let _ = std::fs::rename(&displaced, &copy);
+        return Err(format!(
+            "could not copy myself to {}: {error}",
+            copy.display()
+        ));
+    }
+
+    // Succeeds when the displaced copy was not running — an upgrade over a
+    // Footman that was merely installed rather than started. When it was
+    // running this fails, measured, and the file waits for the next install.
+    let _ = std::fs::remove_file(&displaced);
 
     Ok(copy)
+}
+
+/// Moves the copy being replaced out of the name the new one wants.
+fn displace(copy: &Path, displaced: &Path) -> Result<(), String> {
+    // The last install's displaced copy, which is normally still here: this is
+    // the only thing that ever clears it, and it succeeds now because whatever
+    // was running it has long since gone. If it has not, the rename below is
+    // the one that says so — two live generations of Footman is a thing to
+    // report rather than to work around.
+    let _ = std::fs::remove_file(displaced);
+
+    std::fs::rename(copy, displaced).map_err(|error| {
+        format!(
+            "could not move {} aside to make room: {error}",
+            copy.display()
+        )
+    })
 }
 
 /// Turns autostart on or off, installing first if it has to.

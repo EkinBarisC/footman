@@ -69,6 +69,35 @@ fn a_copy_running_from_anywhere_else_is_not_the_installed_one() {
     );
 }
 
+/// Windows refuses to write over a running executable but will happily rename
+/// one, which is the whole of how an install over a running Footman works.
+#[test]
+fn the_copy_being_replaced_is_moved_aside_not_written_over() {
+    let home = install::home_in(&local());
+
+    assert_ne!(install::displaced_in(&home), install::copy_in(&home));
+}
+
+/// Inside the home, because Uninstall removes the home and nothing else: a
+/// displaced copy anywhere above it would be the residue §11 promises not to
+/// leave, sitting somewhere nobody would go looking.
+#[test]
+fn the_copy_moved_aside_stays_inside_the_home() {
+    let home = install::home_in(&local());
+
+    assert!(install::displaced_in(&home).starts_with(&home));
+}
+
+/// It keeps a name of its own, and specifically not the one the Task points
+/// at. A displaced copy that still read as the installed one would have
+/// Footman decline to install over itself for ever after.
+#[test]
+fn the_copy_moved_aside_is_not_the_installed_one() {
+    let home = install::home_in(&local());
+
+    assert!(!install::is_installed(&install::displaced_in(&home), &home));
+}
+
 /// The removal has to survive the process that asks for it, so it is handed to
 /// something else with instructions to wait. Deleting first and waiting after
 /// would delete nothing at all.

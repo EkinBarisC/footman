@@ -338,6 +338,13 @@ thing to do quietly. The trigger for it is autostart because that is the feature
 that needs it: a logon task has to name an absolute path, and the folder someone
 downloaded into is not one to build one on.
 
+Installing over an older copy that is *running* — which after logon it usually
+is — moves that copy aside rather than writing over it, because Windows refuses
+the one and allows the other. The name the Task points at therefore always holds
+the newest Footman. The displaced copy cannot be deleted while its process
+lives, so it waits inside the home for the next install to clear it, and for
+Uninstall to take it with everything else.
+
 **Uninstall**, in the settings window or as `footman uninstall`, removes the
 scheduled task, the config directory and the installed copy, leaving no trace.
 The copy goes last and by other hands — a running executable cannot delete
