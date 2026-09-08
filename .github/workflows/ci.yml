@@ -1,0 +1,48 @@
+# Windows only, because the Shell is (DESIGN.md §13). When Linux lands this
+# grows a matrix; until then a second runner would compile the Core twice and
+# tell nobody anything.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup default stable
+
+      - name: Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-
+
+      - name: Formatting
+        run: cargo fmt --check
+
+      # Warnings are failures here, and only here: a warning nobody has to
+      # answer for is a warning that accumulates.
+      - name: Lints
+        run: cargo clippy --all-targets -- -D warnings
+
+      # The `integration-test` feature is deliberately not enabled. It installs
+      # a real keyboard hook and synthesises real input, which needs a session
+      # with a keyboard in it; a hosted runner has neither.
+      - name: Tests
+        run: cargo test

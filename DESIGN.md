@@ -185,14 +185,19 @@ chord  = "P"
 action = { type = "run", command = "pnpm dev", show_window = false }
 ```
 
-**The file is the single source of truth.** The settings window writes it;
-Footman watches it and reloads live. Hand-editing, version control and copying a
-config between machines therefore all work for free, and there is no second copy
-of the state to keep in sync.
+**The file is the single source of truth.** The settings window writes it and
+holds nothing back, so hand-editing, version control and copying a config
+between machines all work for free, and there is no second copy of the state to
+keep in sync. Watching the file and reloading it live is the half of that not
+yet built (§12.1) — a hand edit is read at the next start.
 
-**There is no Save button.** Changes apply as they are made. A Save button would
-create a window in which the file has been edited externally while the UI holds
-unsaved changes — a conflict worth designing away rather than resolving.
+**Changes are saved deliberately, and take effect at once.** This section first
+said there was no Save button, on the reasoning that one opens a window in which
+the file has been edited externally while the UI holds unsaved changes. §10
+settled it the other way and the settings window has one, because a Binding
+part-way through being written is not a Binding: a row is born with no key and
+nothing to do, and applying that as it is typed would mean writing rubbish to
+the file and then swallowing a Chord that does nothing.
 
 ## 7. Failure behaviour
 
@@ -378,11 +383,23 @@ Each slice states how it is verified. Slices 0-2 are complete.
 | 6 | **Tray + Pause** — done — and the Tap Action, which no slice had claimed | Manual: the icon changes state, Pause returns the keyboard to normal, Resume restores it |
 | 7 | **Settings window** — done | Manual; Chord capture and application picker. The picker's identities were checked against `footman windows`, so a chosen application both launches and matches |
 | 8 | **Self-install, Scheduled Task, Uninstall** — done | `footman where` before and after each of `install` and `uninstall`; the task definition's settings are asserted by name, since a `Run` value was rejected for what it could not say |
-| 9 | **README, CI, release** | — |
+| 9 | **README, CI, release** — done | `cargo fmt --check`, `clippy -D warnings` and the tests on every push and pull request; a tag builds the one portable executable and attaches it to the release. Writing the README is what turned up §12.1 |
 
 The Core comes first so there is a testable heart before any OS is involved. The
 settings window comes last so it is drawn against a settled model rather than
 redrawn against a moving one.
+
+### 12.1 Named here rather than found later
+
+Writing the README meant reading every claim in this document against the code,
+and three of them are not true yet. None is hard; each is a decision about
+whether v1 wants it, so none is quietly deleted from where it was promised.
+
+| Promised | State |
+| --- | --- |
+| `tap = "capslock"`, a real Caps Lock toggle (§2.3, §6) | Not built. `none` and `escape` are the Tap Actions that exist. With Hyper on Caps Lock there is currently no way to get capitals back |
+| Watching the config file and reloading it live (§6) | Not built. The config is read once at start-up; the settings window replaces the Core directly, so its own edits do apply at once |
+| The tray notifying the user when the hook cannot be installed (§7) | Partly. `Duty::Broken` reaches the tray icon and tooltip, and the watchdog retries — but nothing is raised in front of the user |
 
 ## 13. Beyond Windows
 

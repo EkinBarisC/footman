@@ -1,0 +1,49 @@
+# Builds the one portable executable a release is (DESIGN.md §11) and attaches
+# it to the tag that asked for it. There is no installer to build and nothing
+# to sign: SmartScreen will warn, and the README says so.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      # The same three checks CI runs. A tag can be pushed without a green
+      # branch behind it, and a release is the one build nobody re-runs.
+      - name: Check
+        run: |
+          rustup component add rustfmt clippy
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test
+
+      - name: Build
+        run: cargo build --release
+
+      # `gh` is on the runner and speaks for the repository already, so the
+      # release needs no third-party action and no token of its own.
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "$env:GITHUB_REF_NAME"
+          target/release/footman.exe
+          --title "$env:GITHUB_REF_NAME"
+          --generate-notes
