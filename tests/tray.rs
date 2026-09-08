@@ -76,7 +76,7 @@ fn every_state_looks_different() {
     for icon in &icons {
         assert_eq!(icon.len(), 32 * 32 * 4, "icons are 32×32 RGBA");
         assert!(
-            icon.chunks_exact(4).any(|pixel| pixel[3] == 255),
+            icon.as_chunks::<4>().0.iter().any(|pixel| pixel[3] == 255),
             "an icon with nothing opaque in it is an invisible icon"
         );
     }
