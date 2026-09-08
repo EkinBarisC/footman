@@ -18,7 +18,7 @@ use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 use super::keys::key_named;
-use crate::windows::{Hook, Installed, applications, init_thread, raise_named};
+use crate::windows::{Hook, Installed, applications, init_thread, install, raise_named, task};
 use crate::{
     Action, Chord, Click, Core, Duty, Key, Modifiers, Notice, Settings, TapAction, TrayEffect,
 };
@@ -85,6 +85,8 @@ struct Window {
     filter: String,
 
     status: Notice,
+    /// Whether the user is being asked to confirm an Uninstall.
+    confirming_uninstall: bool,
     /// Whether the form is saying what is wrong with it yet.
     ///
     /// A row is born wrong — no key chosen, nothing to do — and a form that
@@ -156,6 +158,7 @@ impl Window {
             installed: None,
             filter: String::new(),
             status: Notice::default(),
+            confirming_uninstall: false,
             announce_problems: false,
             shown: false,
             quitting: false,
@@ -304,6 +307,17 @@ impl Window {
                 // window to find out has been told nothing.
                 self.hook
                     .rebind(Core::new(config.hyper, config.tap, config.bindings.clone()));
+
+                // Asked of the scheduler rather than remembered, so that a task
+                // the user removed by hand comes back on the next Save instead
+                // of Footman insisting it is still there.
+                if config.autostart != task::registered()
+                    && let Err(error) = install::set_autostart(config.autostart)
+                {
+                    self.status.say(error, now);
+                    return;
+                }
+
                 self.status.say(
                     format!("Saved — {} + {live} binding(s) live now", config.hyper),
                     now,
@@ -387,6 +401,9 @@ impl eframe::App for Window {
 
         if self.picking.is_some() {
             self.picker(ui.ctx());
+        }
+        if self.confirming_uninstall {
+            self.confirm_uninstall(ui.ctx());
         }
     }
 }
@@ -602,10 +619,81 @@ impl Window {
             ui.label("Config file");
             ui.label(self.path.display().to_string());
             ui.end_row();
+
+            ui.label("Installed");
+            // Turning autostart on is what installs Footman: the Scheduled Task
+            // has to name an absolute path, and the folder the user happened to
+            // download into is not one to build a logon trigger on. Nothing is
+            // copied anywhere until then.
+            ui.label(match install::home() {
+                Ok(home) if install::installed() => install::copy_in(&home).display().to_string(),
+                _ => "no — turning on Start with Windows installs a copy".to_string(),
+            });
+            ui.end_row();
         });
 
-        ui.add_space(8.0);
-        ui.label("Autostart and Uninstall take effect in slice 8.");
+        ui.add_space(12.0);
+        ui.separator();
+        if ui.button("Uninstall Footman…").clicked() {
+            self.confirming_uninstall = true;
+        }
+        ui.label("Removes the scheduled task, this config file and the installed copy.");
+    }
+
+    /// Uninstall asks first, because there is nothing to undo it with.
+    fn confirm_uninstall(&mut self, ctx: &egui::Context) {
+        let mut open = true;
+        let mut go = false;
+        let mut keep = false;
+
+        egui::Window::new("Uninstall Footman")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label("This removes:");
+                ui.label("  • the scheduled task, if it is registered");
+                ui.label(format!("  • {}", self.path.display()));
+                match install::home() {
+                    Ok(home) => ui.label(format!("  • {}", home.display())),
+                    Err(ref error) => ui.label(format!("  • the installed copy ({error})")),
+                };
+                ui.add_space(8.0);
+                ui.label("Footman then quits. Nothing here can be undone.");
+                ui.add_space(8.0);
+
+                ui.horizontal(|ui| {
+                    if ui.button("Remove everything").clicked() {
+                        go = true;
+                    }
+                    if ui.button("Keep Footman").clicked() {
+                        keep = true;
+                    }
+                });
+            });
+
+        if keep || !open {
+            self.confirming_uninstall = false;
+            return;
+        }
+        if !go {
+            return;
+        }
+
+        self.confirming_uninstall = false;
+        match install::uninstall(&self.path) {
+            Ok(()) => {
+                // The keyboard comes back before the process goes: the hook is
+                // the one thing that outlives a careless exit.
+                self.hook.quit();
+                self.quitting = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            Err(error) => {
+                let now = ctx.input(|input| input.time);
+                self.status.say(error, now);
+            }
+        }
     }
 }
 
