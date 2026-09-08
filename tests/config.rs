@@ -1,7 +1,7 @@
 //! Behaviour of config loading.
 //!
 //! The config file is the single source of truth (DESIGN.md §6): the settings
-//! window writes it and Footman reloads it live. It is therefore also
+//! window writes it and nothing else holds the state. It is therefore also
 //! hand-editable, which is why the failure behaviour in DESIGN.md §7 matters as
 //! much as the happy path.
 
