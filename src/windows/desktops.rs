@@ -156,8 +156,13 @@ pub fn desktops_from(ids: &[u8], current: &[u8]) -> Option<Desktops> {
         return None;
     }
 
+    // `as_chunks` rather than `chunks_exact`: the length was just checked to be
+    // a multiple, so there is no remainder to think about and the compiler is
+    // told the size instead of being asked to trust it.
     let position = ids
-        .chunks_exact(GUID_BYTES)
+        .as_chunks::<GUID_BYTES>()
+        .0
+        .iter()
         .position(|guid| guid == current)?;
 
     Some(Desktops {

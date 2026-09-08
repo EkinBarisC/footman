@@ -339,7 +339,7 @@ fn outline_widgets(ctx: &egui::Context) {
     let widgets = &mut style.visuals.widgets;
 
     let edge = egui::Stroke::new(
-        1.0,
+        1.0_f32,
         widgets.noninteractive.fg_stroke.color.gamma_multiply(0.4),
     );
     widgets.inactive.bg_stroke = edge;
