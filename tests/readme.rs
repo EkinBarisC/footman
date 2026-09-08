@@ -7,9 +7,16 @@
 //! failure a reader would blame on themselves.
 
 /// The first fenced `toml` block in the README, which is the config example.
+///
+/// Line endings are normalised first. Git hands a Windows checkout whatever
+/// `core.autocrlf` says it should — the CI runner's README has CRLF in it and
+/// this machine's does not — and a fence looked for as LF is not found in a
+/// file that spells its line breaks CRLF. That is a difference between two
+/// checkouts of the same commit, so it is one to absorb rather than to report.
 fn example() -> String {
     let readme = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md"))
-        .expect("the README is beside Cargo.toml");
+        .expect("the README is beside Cargo.toml")
+        .replace("\r\n", "\n");
 
     let after = readme
         .split_once("```toml\n")
