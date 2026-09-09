@@ -19,7 +19,7 @@ third; the platform-free half of the code is written to carry over unchanged.
 
 ## Getting it
 
-Download `footman.exe` from the [releases][releases] and run it. There is no
+Download `footman.exe` from the [latest release][releases] and run it. There is no
 installer and nothing to set up — the icon appears in the tray and Footman is
 watching the keyboard.
 
@@ -35,7 +35,7 @@ you happened to download into is not one to build one on. **Uninstall Footman…
 in the same window, or `footman uninstall`, takes all of it away again: the
 task, the config file and the installed copy, leaving nothing.
 
-[releases]: https://github.com/EkinBarisC/footman/releases
+[releases]: https://github.com/EkinBarisC/footman/releases/latest
 
 ## Using it
 
