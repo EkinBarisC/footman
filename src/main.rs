@@ -233,6 +233,14 @@ fn where_() {
             .unwrap_or_else(|| "nowhere".to_string())
     );
     println!(
+        "log       {}",
+        Config::default_path()
+            .map(|path| footman::windows::journal::beside(&path)
+                .display()
+                .to_string())
+            .unwrap_or_else(|| "nowhere".to_string())
+    );
+    println!(
         "task      {} ({})",
         task::NAME,
         if task::registered() {
@@ -245,22 +253,43 @@ fn where_() {
 
 #[cfg(windows)]
 fn windows_main() {
+    use std::cell::Cell;
+    use std::panic::{self, AssertUnwindSafe};
     use std::sync::mpsc;
     use std::thread;
+    use std::time::{Duration, Instant};
 
+    use footman::windows::{Recovery, Revival, journal};
     use footman::{Config, Core, Duty, Effect, Settings};
     use windows::Win32::System::Threading::GetCurrentThreadId;
+
+    /// How many times the tray may die inside `DEATH_SPAN_MS` before Footman
+    /// stops rebuilding it (ADR-0008).
+    ///
+    /// Eight rather than the five this began as. A laptop waking from
+    /// hibernation was measured taking some thirty seconds to have a GPU to
+    /// give the window, and every rebuild before that fails — four of the five
+    /// were spent waiting for the graphics stack rather than on anything wrong
+    /// with Footman.
+    const DEATHS: usize = 8;
+    const DEATH_SPAN_MS: u64 = 10 * 60 * 1_000;
 
     let Some(path) = Config::default_path() else {
         eprintln!("footman: no config directory on this system");
         return;
     };
 
+    // First, so that everything after it — a config that will not load, a
+    // panic on any thread — has somewhere to be written down. Standard error
+    // is not that place: started at logon, Footman has no console.
+    journal::start(journal::beside(&path));
+
     let loaded = match Config::load_or_create(&path) {
         Ok(loaded) => loaded,
         Err(error) => {
             // The keyboard comes first (DESIGN.md §7): if the config cannot be
             // trusted, no hook is installed and the keyboard stays untouched.
+            journal::note(format!("the config could not be loaded: {}", error.message));
             eprintln!("footman: {}", error.message);
             if let Some(line) = error.line {
                 eprintln!("        {}:{line}", path.display());
@@ -299,21 +328,64 @@ fn windows_main() {
     // (DESIGN.md §9.1).
     thread::spawn(move || footman::windows::dispatch(inbox));
 
-    let settings = Settings::from(config.clone());
-    let core = Core::new(config.hyper, config.tap, config.bindings);
+    let core = Core::new(config.hyper, config.tap, config.bindings.clone());
     // This thread is the one the tray lives on, and the one the hook nudges
     // when its state changes.
     let here = unsafe { GetCurrentThreadId() };
     let hook = match footman::windows::spawn(core, effects, duty, here) {
         Ok(hook) => hook,
-        Err(error) => return eprintln!("footman: {error}"),
+        Err(error) => {
+            journal::note(format!("the keyboard hook could not start: {error}"));
+            return eprintln!("footman: {error}");
+        }
     };
 
+    // The first Duty the hook reports arrives on the channel, so the icon is
+    // correct even if the hook could not be installed.
+    let standing = Cell::new(duties.try_recv().unwrap_or(Duty::Active));
+    let mut revival = Revival::new(DEATHS, DEATH_SPAN_MS);
+    let born = Instant::now();
+
     // The tray and the settings window own the main thread from here
-    // (DESIGN.md §10). The first Duty the hook reports arrives on the channel,
-    // so the icon is correct even if the hook could not be installed.
-    let standing = duties.try_recv().unwrap_or(Duty::Active);
-    if let Err(error) = footman::windows::run_ui(path, settings, hook, duties, standing) {
-        eprintln!("footman: {error}");
+    // (DESIGN.md §10) — and can die without taking Footman with them. They
+    // belong to eframe, whose GL context does not always survive the laptop
+    // waking from hibernation; the hook thread never needed it (ADR-0008).
+    loop {
+        // Read again for each window rather than once: a window rebuilt after
+        // dying should show what was last saved, not what was loaded at logon.
+        let settings = Config::load_or_create(&path)
+            .map(|loaded| Settings::from(loaded.config))
+            .unwrap_or_else(|_| Settings::from(config.clone()));
+
+        let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+            footman::windows::run_ui(path.clone(), settings, &hook, &duties, &standing)
+        }));
+        let death = match outcome {
+            // Quit, or Uninstall. The hook is already on its way down.
+            Ok(Ok(())) => return,
+            Ok(Err(error)) => error,
+            // What it said, and where, the panic hook has already journalled.
+            Err(_) => "it panicked".to_string(),
+        };
+
+        let now = u64::try_from(born.elapsed().as_millis()).unwrap_or(u64::MAX);
+        match revival.died(now) {
+            Recovery::After(wait) => {
+                journal::note(format!(
+                    "the tray and settings window died ({death}); rebuilding them in {wait} ms"
+                ));
+                thread::sleep(Duration::from_millis(wait));
+            }
+            Recovery::GiveUp => {
+                // A hook nobody can pause or quit is not one to leave running.
+                journal::note(format!(
+                    "the tray and settings window died ({death}) too often to go on \
+                     rebuilding them; Footman is stopping"
+                ));
+                eprintln!("footman: the tray could not be kept alive: {death}");
+                hook.quit();
+                return;
+            }
+        }
     }
 }
