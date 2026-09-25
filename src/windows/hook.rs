@@ -21,7 +21,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_KEYDOWN, WM_KEYUP, WM_QUIT, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_TIMER,
 };
 
-use super::{Health, HookWatch, same_clock, vk_to_key};
+use super::{Health, HookWatch, journal, same_clock, vk_to_key};
 use crate::{Core, Duty, Effect, KeyEvent, Verdict};
 
 /// How long the hook may see nothing before silence becomes evidence.
@@ -269,6 +269,7 @@ fn start(duty: &Sender<Duty>, wake: u32) -> Option<HHOOK> {
             Some(hook)
         }
         Err(error) => {
+            journal::note(format!("the keyboard hook could not be installed: {error}"));
             say(format!("hook could not be installed: {error}"));
             report(duty, wake, Duty::Broken);
             None
@@ -328,6 +329,10 @@ fn supervise(hook: Option<HHOOK>) -> Option<HHOOK> {
         return hook;
     }
 
+    // Traced but not journalled. A reinstall is the expected answer to a
+    // stretch of mouse-only work (ADR-0006), so journalling each one filled the
+    // file with hundreds of lines a day saying nothing had gone wrong — and
+    // buried the one line that said something had.
     say("hook looked dead; reinstalling");
     stop(hook);
     // A reinstall that fails leaves nothing installed and the watchdog will try

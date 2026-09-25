@@ -9,7 +9,10 @@
 //! which costs nothing because the settings window is focused while it happens
 //! and egui already reports what was pressed.
 
+use std::cell::Cell;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
@@ -27,12 +30,16 @@ use crate::{
 const TITLE: &str = "Footman";
 
 /// Runs the tray and the settings window on the calling thread. Blocks.
+///
+/// Returns `Ok` when the user quits. Anything else — an error, or a panic out of
+/// eframe — is the window dying rather than Footman, and the caller builds it
+/// again (ADR-0008). Everything it borrows is what has to survive that.
 pub fn run(
     path: PathBuf,
     settings: Settings,
-    hook: Hook,
-    duties: Receiver<Duty>,
-    duty: Duty,
+    hook: &Hook,
+    duties: &Receiver<Duty>,
+    duty: &Cell<Duty>,
 ) -> Result<(), String> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -42,6 +49,10 @@ pub fn run(
             // Tray-resident: Footman is running long before anyone asks to see
             // it, and goes on running after they stop looking.
             .with_visible(false),
+        // Already the default, and stated because it is load-bearing: eframe
+        // keeps its event loop for another run only when asked to return, and
+        // `winit` cannot make a second one (ADR-0008).
+        run_and_return: true,
         ..Default::default()
     };
 
@@ -62,13 +73,17 @@ enum Tab {
     General,
 }
 
-struct Window {
+struct Window<'a> {
     path: PathBuf,
     settings: Settings,
-    hook: Hook,
-    duties: Receiver<Duty>,
-    duty: Duty,
+    hook: &'a Hook,
+    duties: &'a Receiver<Duty>,
+    /// Shared with the caller rather than owned: a window rebuilt after this
+    /// one dies has to start from what this one knew, and the reports that
+    /// told it have already been drained.
+    duty: &'a Cell<Duty>,
 
+    _heartbeat: Heartbeat,
     tray: TrayIcon,
     pause: MenuItem,
     settings_entry: MenuItem,
@@ -95,33 +110,32 @@ struct Window {
     /// first moment the answer matters.
     announce_problems: bool,
     shown: bool,
+    /// Whether the user has asked to see the window at all.
+    ///
+    /// Footman is tray-resident, so the answer is no until they click the icon
+    /// — and it has to be asserted rather than assumed. See `logic`.
+    wanted: bool,
     quitting: bool,
 }
 
-impl Window {
+impl<'a> Window<'a> {
     fn new(
         cc: &eframe::CreationContext<'_>,
         path: PathBuf,
         settings: Settings,
-        hook: Hook,
-        duties: Receiver<Duty>,
-        duty: Duty,
+        hook: &'a Hook,
+        duties: &'a Receiver<Duty>,
+        duty: &'a Cell<Duty>,
     ) -> Result<Self, String> {
         init_thread();
         outline_widgets(&cc.egui_ctx);
 
         // The window starts hidden, so nothing on screen is asking for frames.
         // Without a heartbeat the tray would stop responding.
-        let ctx = cc.egui_ctx.clone();
-        std::thread::spawn(move || {
-            loop {
-                std::thread::sleep(Duration::from_millis(100));
-                ctx.request_repaint();
-            }
-        });
+        let heartbeat = Heartbeat::start(cc.egui_ctx.clone());
 
         let settings_entry = MenuItem::new("Settings…", true, None);
-        let pause = MenuItem::new(duty.pause_label(), true, None);
+        let pause = MenuItem::new(duty.get().pause_label(), true, None);
         let quit = MenuItem::new("Quit", true, None);
 
         let menu = Menu::new();
@@ -137,8 +151,8 @@ impl Window {
 
         let tray = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
-            .with_tooltip(duty.tooltip())
-            .with_icon(icon_of(duty)?)
+            .with_tooltip(duty.get().tooltip())
+            .with_icon(icon_of(duty.get())?)
             .build()
             .map_err(|error| error.to_string())?;
 
@@ -148,6 +162,7 @@ impl Window {
             hook,
             duties,
             duty,
+            _heartbeat: heartbeat,
             tray,
             pause,
             settings_entry,
@@ -161,11 +176,13 @@ impl Window {
             confirming_uninstall: false,
             announce_problems: false,
             shown: false,
+            wanted: false,
             quitting: false,
         })
     }
 
     fn show(&mut self, ctx: &egui::Context) {
+        self.wanted = true;
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         // Windows refuses the foreground to a background process, and Footman
@@ -177,6 +194,7 @@ impl Window {
     fn hide(&mut self, ctx: &egui::Context) {
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         self.shown = false;
+        self.wanted = false;
         // Whatever was being said is over. The window is hidden rather than
         // closed, so anything left here would still be on screen the next time
         // it is opened.
@@ -186,13 +204,14 @@ impl Window {
     fn drain_duties(&mut self) {
         let mut changed = false;
         while let Ok(duty) = self.duties.try_recv() {
-            self.duty = duty;
+            self.duty.set(duty);
             changed = true;
         }
         if changed {
-            self.pause.set_text(self.duty.pause_label());
-            let _ = self.tray.set_tooltip(Some(self.duty.tooltip()));
-            let _ = self.tray.set_icon(icon_of(self.duty).ok());
+            let duty = self.duty.get();
+            self.pause.set_text(duty.pause_label());
+            let _ = self.tray.set_tooltip(Some(duty.tooltip()));
+            let _ = self.tray.set_icon(icon_of(duty).ok());
         }
     }
 
@@ -220,7 +239,7 @@ impl Window {
                 continue;
             };
 
-            match self.duty.resolve(click) {
+            match self.duty.get().resolve(click) {
                 TrayEffect::OpenSettings => self.show(ctx),
                 TrayEffect::Pause => self.hook.pause(),
                 TrayEffect::Resume => self.hook.resume(),
@@ -353,10 +372,51 @@ fn icon_of(duty: Duty) -> Result<Icon, String> {
     Icon::from_rgba(duty.icon(), 32, 32).map_err(|error| error.to_string())
 }
 
-impl eframe::App for Window {
+/// Keeps a hidden window's event loop turning, for as long as the window it
+/// belongs to exists.
+///
+/// It used to beat forever, which was the same thing while there was only ever
+/// one window. A rebuilt window (ADR-0008) starts its own, so the old one has
+/// to stop rather than go on repainting a context nobody holds.
+struct Heartbeat(Arc<AtomicBool>);
+
+impl Heartbeat {
+    fn start(ctx: egui::Context) -> Self {
+        let beating = Arc::new(AtomicBool::new(true));
+        let alive = Arc::clone(&beating);
+        std::thread::spawn(move || {
+            while alive.load(Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_millis(100));
+                ctx.request_repaint();
+            }
+        });
+        Heartbeat(beating)
+    }
+}
+
+impl Drop for Heartbeat {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Relaxed);
+    }
+}
+
+impl eframe::App for Window<'_> {
     /// Runs whether or not the window is visible, which is what keeps the tray
     /// answering while only the icon is on screen.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Asked for every frame the window is not wanted, rather than once at
+        // the start, because eframe un-hides it again: a window is built hidden
+        // and shown as soon as it has painted a frame, and it paints one
+        // because the first frame's ViewportInfo does not know yet that the
+        // window is hidden — `visible()` is `None` there, and unknown is read
+        // as visible. So the settings window appeared at every logon, and
+        // again every time it was rebuilt after the laptop woke (ADR-0008),
+        // which for a tray-resident launcher is a window to close rather than
+        // one anybody asked for.
+        if !self.wanted {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        }
+
         self.drain_duties();
         self.drain_tray(ctx);
         self.capture(ctx, ctx.input(|input| input.time));
@@ -408,7 +468,7 @@ impl eframe::App for Window {
     }
 }
 
-impl Window {
+impl Window<'_> {
     fn bindings_tab(&mut self, ui: &mut egui::Ui) {
         let problems = if self.announce_problems {
             self.settings.problems()

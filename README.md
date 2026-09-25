@@ -180,6 +180,11 @@ normally.
 | One invalid Binding | Skip it, keep the rest, flag it in the settings window |
 | Duplicate Chord | First wins; the second is reported as a warning, never silently applied |
 | Hook cannot be installed | The tray enters an error state and retries. Never silently dead |
+| The tray icon vanishes, e.g. as the laptop wakes | The tray is rebuilt within seconds; Chords keep working meanwhile |
+
+Whatever went wrong is written to `footman.log`, beside the config file —
+`footman where` prints the path. Footman has no console when it starts at logon,
+so that file is the only place it can say so.
 
 Malformed TOML is deliberately fatal rather than best-effort: "half my Bindings
 work and I don't know why" is undiagnosable, while "nothing works and the tray
@@ -196,7 +201,7 @@ rest are diagnostics: they run one piece of Footman without the keyboard.
 | `footman` | Loads the config, starts the hook, sits in the tray |
 | `footman install` | Installs a copy and registers the logon task |
 | `footman uninstall` | Removes the task, the config directory and the copy |
-| `footman where` | Says where all three are, and whether they exist |
+| `footman where` | Says where all three are, and whether they exist, and where the log is |
 | `footman windows` | Every window Footman can see, with the identities it answers to |
 | `footman apps` | Every installed application, with the identity that names it |
 | `footman focus <identity>` | Runs one App Action, without pressing a Chord |

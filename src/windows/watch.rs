@@ -73,13 +73,31 @@ impl HookWatch {
 /// system get ahead of us, and the watchdog stops being able to notice a dead
 /// hook at all. Which is precisely the machine that has been running for weeks
 /// without a restart: the one that needs it.
+///
+/// A reading slightly *ahead* of `now` is not a contradiction either. The two
+/// clocks are read one after the other, and a key pressed in between leaves the
+/// system's last input a few milliseconds past the `now` taken first. That is
+/// input on this turn of the clock, a moment ago, and it is read as `now`.
+/// Taken for the turn before, it would be seven weeks stale — or, on a machine
+/// up for less than seven weeks, before the clock existed at all: an underflow,
+/// which in a debug build is a panic that takes the hook thread with it.
 pub fn same_clock(now: u64, short: u32) -> u64 {
-    let lifted = (now & !0xFFFF_FFFF) | u64::from(short);
-    // The reading is of something that has already happened, so a value in the
-    // future means it belongs to the turn of the clock before this one.
-    if lifted > now {
-        lifted - (1 << 32)
-    } else {
-        lifted
+    const TURN: u64 = 1 << 32;
+
+    let lifted = (now & !(TURN - 1)) | u64::from(short);
+    if lifted <= now {
+        return lifted;
     }
+
+    // Ahead of us by less than half a turn: a reading taken a moment after
+    // `now`, on this turn. Half a turn is the only honest line to draw between
+    // "just now" and "the turn before" — whichever is nearer is the one meant.
+    if lifted - now < TURN / 2 {
+        return now;
+    }
+
+    // Otherwise it belongs to the turn of the clock before this one. On the
+    // first turn there is none, and a reading from before the machine started
+    // is read as the dawn of the clock rather than wrapped to its far end.
+    lifted.saturating_sub(TURN)
 }

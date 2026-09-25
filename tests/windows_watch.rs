@@ -89,3 +89,30 @@ fn a_short_tick_after_a_wrap_is_still_in_the_past() {
 fn the_two_clocks_can_agree_exactly() {
     assert_eq!(same_clock(4_000, 4_000), 4_000);
 }
+
+/// The watchdog reads its own clock first and the system's second, so a key
+/// pressed between the two leaves the system's last input a few milliseconds
+/// in the future. That is input from a moment ago, not from seven weeks ago —
+/// and on a machine that has not been up for seven weeks, reading it as the
+/// turn before used to underflow, which a debug build turns into a panic on
+/// the hook thread.
+#[test]
+fn a_reading_a_moment_ahead_is_read_as_now() {
+    assert_eq!(same_clock(4_000, 4_010), 4_000);
+}
+
+/// The same race, after the short clock has wrapped: still now, not the
+/// previous turn.
+#[test]
+fn a_reading_a_moment_ahead_after_a_wrap_is_still_now() {
+    const WRAP: u64 = 1 << 32;
+    assert_eq!(same_clock(WRAP + 4_000, 4_010), WRAP + 4_000);
+}
+
+/// A reading that could only belong to a turn before the machine started has
+/// no honest meaning. It is read as the dawn of the clock — "the system saw
+/// nothing we did not" — rather than wrapped to the far end of it.
+#[test]
+fn a_reading_from_before_the_clock_began_is_its_dawn() {
+    assert_eq!(same_clock(1_000, 0xFFFF_0000), 0);
+}

@@ -214,11 +214,14 @@ The governing rule, and the analogue of Bouncer's fail-open:
 | One invalid Binding | Skip it, keep the rest, flag it in the settings window |
 | Duplicate Chord | First wins; the second is reported as a warning, never silently applied |
 | Hook cannot be installed | Tray enters an error state, retries with backoff, notifies the user. Never silently dead |
+| The tray and settings window die — the GL context lost as the laptop wakes from hibernation, say | Rebuilt in the same process after a short wait, the hook untouched throughout, and rebuilt hidden. A ninth death inside ten minutes and Footman gives up and exits. Each one is written to `footman.log` (ADR-0008) |
 | App Identity no longer resolves | The Chord is still suppressed; the Action fails with a notification and the Binding is flagged as broken |
 
-**Nothing opens by itself, first run included.** Most of Footman's runs are the
-logon task's, and a window that appears at logon is the behaviour a background
-launcher exists to avoid — there is no run on which it would be welcome and no
+**Nothing opens by itself, first run included.** This is asserted, not assumed:
+eframe shows a window as soon as it paints its first frame, so the window says
+`Visible(false)` for itself on every frame until the tray asks for it
+(ADR-0008). Most of Footman's runs are the logon task's, and a window that
+appears at logon is the behaviour a background launcher exists to avoid — there is no run on which it would be welcome and no
 way for the process to tell the two kinds apart worth trusting. The tray icon is
 the whole of the invitation, and the settings window is one click into it.
 
